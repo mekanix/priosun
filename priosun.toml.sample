@@ -1,0 +1,11 @@
+# Priosun configuration in TOML format.
+# Omitted values use built-in defaults.
+
+bridge = "jails"
+bridge_ip = "172.16.0.254"
+bridge_ip6 = ":1"
+ipv6_prefix = "fd10:6c79:8ae5:8b91:"
+zfs_pool = "zroot"
+bridge_members = []
+allow = []
+vm_firmware = "/usr/local/share/uefi-firmware/BHYVE_UEFI.fd"
