@@ -1,0 +1,199 @@
+.Dd $Mdocdate: May 20 2018 $
+.Dt REGGAE 1
+.Os
+.Sh NAME
+.Nm priosun
+.Nd \fBREG\fRister \fBG\fRlobaly \fBA\fRccess \fBEv\fRerywhere is a package
+which helps in common DevOps tasks
+.Sh SYNOPSIS
+.Nm priosun <command>
+.Sh DESCRIPTION
+.Pp
+\fBReggae\fR is an open source package which relays on base \fBFreeBSD\fR
+and/or \fBCBSD\fR to provide lower level management for jails and virtual
+machines.
+.Pp
+If you have ever used Vagrant or Docker Compose, Reggae is best described as an
+alternative to those. It enables you easy development inside jail while code
+editing is done on the host. It makes transition from development to production
+easier by using provisioners. It makes host clean of all requirements of
+development and puts them inside jail which is easily stopped, started,
+provisioned, and destroyed.
+.Pp
+To configure Priosun, edit /etc/local/etc/priosun.toml.
+.Pp
+.Dl PROJECTS_DIR=/home/me/repos
+.Pp
+It will set directory to be shared with virtual machines, like directory
+containing your projects. If you don't need such a directory, you can set it to
+/var/empty.
+.Pp
+.Dl PROJECTS_DIR=/var/empty
+.Pp
+If you want to run Reggae with base jails, no need to do any other edits, but
+if you'd like to use \fBCBSD\fR as the backend, you need to add
+.Pp
+.Dl BACKEND=cbsd
+.Pp
+run the following as root:
+.Pp
+.Dl # service pflog restart
+.Dl # service pf restart
+.Pp
+PF is initialized only if /etc/pf.conf doesn't exist already. In those cases PF
+services should be restarted.
+.Pp
+Through the TOML config file in /etc/local/etc/priosun.toml you can change values for
+anything Priosun is using. The network jail can contain DHCP and DNS services.
+They are used to lease IPs to jails and virtual machines and to register all
+resources in DNS so that you can use FQDN instead of IP addresses. This jail IP is used in /etc/resolvconf.conf if host has
+dynamic IP on egress, so that changes of network parameters are passed to the
+appropriate jail. Also, host will use DNS jail IP in /etc/resolv.conf. In
+short, it enables you to not remember jail IPs when you have to use them,
+but use <jail name>.<domain> to reference them.
+.Sh PROJECT
+.Pp
+A project consists of:
+.Bl -bullet
+.It
+\fBMakefile\fR - configured for use with project
+.El
+.Pp
+One project can contain many services, and that's going to be shown in the
+generated Makefile. The SERVICES variable in it will be commented but populated
+with example services. All services when downloaded will be in
+services/<service> directory. You can use preexisting services if you define
+\fBUSE = <service>\fR. For example, you can write the following:
+.Pp
+.Dl PRIOSUN_PATH = /usr/local/share/priosun
+.Dl USE = letsencrypt mysql wordpress nginx
+.Dl .include <${PRIOSUN_PATH}/mk/project.mk>
+.Pp
+This project will set Wordpress in a jail.
+.Pp
+You can run \fBmake <target>\fR on the project:
+.Bl -bullet -offset indent -compact
+.It
+destroy
+.It
+devel
+.It
+fetch
+.It
+init
+.It
+login service=<service>
+.It
+provision
+.It
+setup
+.It
+up
+.El
+.Pp
+Special note for the devel target: your repo must have bin/devel.sh which will
+be run on the host. All project targets can be suffixed with service=<service>
+but in the above list only those which require a service are explicitely
+mentioned. If the service is passed as an argument, the target will be
+executed only on that service/jail.
+.Sh ANSIBLE
+.Pp
+A service with ansible provisioner consists of:
+.Bl -bullet
+.It
+\fBMakefile\fR - configured for use with Ansible
+.It
+\fBplaybook\fR - containing group_vars, inventory and roles directories as placeholders for files generated on the fly, but can be used to configure your playbook
+.It
+\fBrequirements.yml\fR - list of requirements, with only one initially. All requirements from this file are downloaded from Ansible Galaxy
+templates/site.yml.tpl - this file should be edited to add/remove roles, playbooks, etc.
+.El
+.Pp
+When ran with this configuration, priosun will first check if ansible executable
+is available on  the host, and if it isn't, it will run \fBpkg install ansible\fR.
+If you use Python's virtual environments, for example, you can avoid having
+ansible available to everyone on the system.
+.Sh CHEF
+.Pp
+A service with chef provisioner consists of:
+.Bl -bullet
+.It
+\fBMakefile\fR - configured for use with chef
+.It
+\fBplaybook\fR - containing cookbooks/core/recipes/default.rb dummy script
+.El
+.Pp
+When ran with this configuration, priosun will first check if chef executable
+is available, and if it isn't, it will run \fBpkg install -y chef\fR inside
+jail. Then it will mount playbook directory on /root/chef inside jail. To do
+actual provisioning, Reggae uses \fBchef-client --local-mode\fR.
+.Sh PUPPET
+.Pp
+A service with puppet provisioner consists of:
+.Bl -bullet
+.It
+\fBMakefile\fR - configured for use with puppet
+.It
+\fBplaybook\fR - containing cookbooks/core/recipes/default.rb dummy script
+.El
+.Pp
+When ran with this configuration, priosun will first check if puppet executable
+is available inside jail, and if it isn't, it will install it from packages.
+Then it will mount playbook directory on /usr/local/etc/puppet/manifests inside
+jail. To do actual provisioning, Reggae uses \fBpuppet apply\fR.
+.Sh SALT STACK
+.Pp
+A service with salt provisioner consists of:
+.Bl -bullet
+.It
+\fBMakefile\fR - configured for use with salt
+.It
+\fBplaybook\fR - containing top.sls and core.sls playbooks
+.El
+.Pp
+When ran with this configuration, priosun will first check if salt executable is
+available, and if it isn't, it will run \fBpkg install -y py36-salt\fR inside
+jail. Then it will mount playbook directory on /usr/local/etc/salt/states inside
+jail. To do actual provisioning, Reggae uses \fBsalt-call --local state.apply\fR.
+.Sh SHELL
+.Pp
+A service with shell provisioner consists of:
+.Bl -bullet
+.It
+\fBMakefile\fR - configured for use with shell
+.It
+\fBplaybook\fR - containing dummy provision.sh to start with
+.El
+.Pp
+When ran with this configuration, priosun will first mount playbook directory on
+/root/shell inside jail. To do actual provisioning, Reggae will run
+\fB/root/shell/provision.sh\fR.
+.Sh EXAMPLES
+.Pp
+Quickest way to get basic project is:
+.Pp
+.Dl mkdir myproject
+.Dl cd myproject
+.Dl priosun init-project
+.Pp
+Quickest way to get basic service provisioned with Ansible is:
+.Pp
+.Dl mkdir myservice
+.Dl cd myservice
+.Dl priosun init shell
+.Dl make
+.Pp
+You can have multiple provisioners, and the order they are declared on the
+command line is the order they will be executed in.
+.Pp
+.Dl mkdir myservice
+.Dl cd myservice
+.Dl priosun init shell ansible
+.Dl make
+.Sh SEE ALSO
+.Xr jail 8
+.Xr bhyve 8
+.Sh BUGS
+Report bugs to https://github.com/cbsd/priosun/issues.
+.Sh AUTHORS
+Goran Mekić <meka@tilda.center>

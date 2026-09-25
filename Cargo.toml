@@ -1,0 +1,19 @@
+[package]
+name = "priosun"
+version = "0.0.1"
+edition = "2021"
+default-run = "priosun"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+ipnet = "2"
+nvtree = "0.0.2"
+jail = "0.3.1"
+tabled = "0.22"

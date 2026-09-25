@@ -1,0 +1,209 @@
+# Priosun
+
+Priosun is a Rust tool for managing FreeBSD jails and bhyve virtual machines.
+It provides a client/daemon architecture: `priosun` sends requests over a Unix
+socket, while `priosund` executes them with the required privileges.
+
+## Features
+
+- Jail lifecycle management
+- Native bhyve VM lifecycle management
+- NVMe-backed VM disks
+- Optional ISO, VNC, and TPM support for VMs
+- Shared lifecycle commands for jails and VMs
+- ZFS dataset and volume inspection
+- nvtree-based Unix-socket protocol
+- Public Rust client library
+
+## Requirements
+
+- FreeBSD 13 or newer
+- Root privileges for jail, VM, storage, and network operations
+- Rust toolchain when building from source
+
+## Configuration
+
+Priosun reads TOML from `/etc/local/etc/priosun.toml`. For sample of the configuration look at
+`priosun.toml.sample`.
+
+## Daemon
+
+Start the executor daemon:
+
+```sh
+priosund
+```
+
+The daemon listens on:
+
+```text
+/var/run/priosun/socket
+```
+
+By default, `priosund` detaches into the background. Use `--no-daemon` to keep
+it in the foreground:
+
+```sh
+priosund --no-daemon
+```
+
+Use an alternate configuration file with:
+
+```sh
+priosund --config /path/to/priosun.toml
+```
+
+## Commands
+
+Create resources:
+
+```sh
+priosun create dataset data/mydataset
+priosun create volume windows --size 32G
+priosun create jail myjail
+priosun create jail app --set FreeBSD-set-minimal-jail
+priosun create base jail --version 15.1 15.1 --set FreeBSD-set-base-jail
+priosun create jail --version 15.1 myjail --base 15.1
+priosun create vm windows \
+  --disk 32G \
+  --os freebsd \
+  --iso /var/vm/Windows.iso \
+  --cpus 8 \
+  --memory 32G \
+  --vnc-port 5900 \
+  --tpm
+
+priosun create vm freebsd15 \
+  --disk 32G \
+  --memory 4G \
+  --os freebsd \
+  --version 15.1 \
+  --cloud-init
+
+priosun create vm ubuntu24 \
+  --disk 32G \
+  --memory 4G \
+  --os ubuntu \
+  --version 24.04 \
+  --cloud-init
+
+priosun create vm fedora44 \
+  --disk 32G \
+  --memory 4G \
+  --os fedora \
+  --version 44-1.7 \
+  --cloud-init
+
+priosun create vm debian13 \
+  --disk 32G \
+  --memory 4G \
+  --os debian \
+  --version 13 \
+  --cloud-init
+```
+
+`create base jail` installs a reusable base jail at `/var/priosun/base/<name>` and
+creates its `@base` ZFS snapshot. `create jail --base <name>` clones that
+snapshot into the new jail's root dataset. Base jails have no jail
+configuration and are not managed as running jails.
+
+The optional `--version MAJOR.MINOR` selects the PkgBase release and records
+the matching release metadata for the jail, such as `15.0` or `15.1`.
+
+VM creation requires `--os`; `freebsd`, `ubuntu`, `fedora`, and `debian` are supported. VMs may
+enable cloud-init with the flag `--cloud-init`. The selected OS determines the
+cloud image format and import process. Both currently get a per-VM FAT32
+`cidata` volume under `/var/priosun/seed`, attached as an additional NVMe
+device.
+
+FreeBSD cloud images are downloaded as compressed raw images. Ubuntu, Fedora, and
+Debian cloud images are downloaded as bootable QCOW2 images and converted to raw
+before being written to the VM's NVMe zvol. Images are cached in
+`/var/priosun/images` and reused for later VM creations with the same release
+and architecture. Ubuntu versions may be specified as a release number such as
+`26.04` or its codename, such as `resolute`. Fedora versions use the release
+format `MAJOR-RELEASE`, such as `44-1.7`. Debian versions may be specified as
+`13`, `12`, or `11`, or by codename (`trixie`, `bookworm`, or `bullseye`).
+
+Ubuntu, Fedora, and Debian VM creation requires the `qemu-tools` package, which provides
+`qemu-img`.
+
+Ubuntu cloud-init VMs receive serial-console configuration automatically:
+GRUB is configured for `ttyS0`, `serial-getty@ttyS0.service` is enabled, and
+bhyve is started with `-l com1,stdio` connected to a daemon-owned PTY. Use
+`priosun attach <name>` to connect to it.
+
+Fedora cloud-init VMs receive equivalent serial-console configuration through
+`grubby` and `serial-getty@ttyS0.service`; their serial console is also
+available through `priosun attach <name>`.
+
+Debian cloud-init VMs receive equivalent serial-console configuration through
+GRUB and `serial-getty@ttyS0.service`; their serial console is also available
+through `priosun attach <name>`.
+
+Managed jail and VM configuration files contain a `dependencies` array. Dependencies
+are started first, and cycles are rejected:
+
+```toml
+dependencies = ["network", "storage-vm"]
+enabled = true
+```
+
+Dataset and volume names are relative to `zfs_pool` unless they already include
+that pool name. Volumes require a ZFS size such as `32G`.
+
+Datasets, volumes, jails, and VMs can be destroyed with the same command. Jails
+and VMs also share the start and stop commands:
+
+```sh
+priosun start windows
+priosun start windows --attach
+priosun stop windows
+priosun destroy vm windows
+priosun destroy base jail 15.1
+priosun attach myjail
+priosun dependencies jail myjail network,storage-vm
+priosun enable myjail
+priosun disable storage-vm
+priosun network-init
+```
+
+List resources:
+
+```sh
+priosun list datasets
+priosun list volumes
+priosun list jails
+priosun list vms
+priosun list all
+```
+
+The supported commands are `create`, `destroy`, `start`, `stop`, `attach`, `enable`,
+`disable`, `dependencies`, `network-init`, `version`, and `list`.
+
+The `network-init` command configures the bridge in `/etc/rc.conf` and activates
+it immediately, then creates the managed `network` jail when necessary, installs Kea
+DHCP and Knot DNS, writes their configuration, and starts the jail. Its address
+is controlled by `network_ip` and `network_ip6`; the bridge gateway is supplied
+by `bridge_ip` and `bridge_ip6`. If `domain` is empty, the host's domain is
+used. It also configures the host's `local_unbound` service and `resolvconf` to
+forward the managed domain and reverse zones to Knot in the network jail.
+Set `use_ipv4` or `use_ipv6` to `false` to disable that address family; at
+least one must remain enabled.
+
+## Rust client
+
+The package also builds a public `priosun` library crate. Responses are
+`nvtree::Nvtree` values with either an `error` field or a request-specific
+`response` field:
+
+```rust
+use priosun::protocol::{Client, Resource};
+
+let client = Client::default();
+let result = client.list(Resource::Vm)?;
+```
+
+Requests also use named nvtree fields. For example, creating a volume sends
+`command`, `type`, `volume`, and numeric `size` fields rather than an unnamed
+argument array.
