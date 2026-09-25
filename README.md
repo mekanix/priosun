@@ -100,12 +100,34 @@ priosun create vm debian13 \
   --os debian \
   --version 13 \
   --cloud-init
+
+priosun init web
+priosun init --provisioner ansible --container vm web-vm
+cd web && priosun up
+cd web && priosun down
+cd web && priosun destroy
 ```
 
 `create base jail` installs a reusable base jail at `/var/priosun/base/<name>` and
 creates its `@base` ZFS snapshot. `create jail --base <name>` clones that
 snapshot into the new jail's root dataset. Base jails have no jail
 configuration and are not managed as running jails.
+
+`init <service>` creates a service directory with a `service.toml` manifest.
+Services default to running in a jail; use `--container vm` to select a VM.
+Provisioners are optional. The first supported provisioner is Ansible:
+
+```sh
+priosun init --provisioner ansible myservice
+```
+
+This creates the Ansible requirements, playbook, inventory, group variables, and
+roles directories inside the service directory.
+
+Run `priosun up` from an initialized jail service directory to create and start
+its jail through the Priosun daemon. Run `priosun down` in the same directory to
+stop it, or `priosun destroy` to stop and remove it. VM services are not
+supported by `up`, `down`, or manifest-based `destroy` yet.
 
 The optional `--version MAJOR.MINOR` selects the PkgBase release and records
 the matching release metadata for the jail, such as `15.0` or `15.1`.

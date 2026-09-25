@@ -7,5 +7,6 @@ pub mod net;
 pub mod network;
 pub mod output;
 pub mod protocol;
+pub mod service;
 pub mod template;
 pub mod util;

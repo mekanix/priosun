@@ -362,7 +362,6 @@ fn execute_jail_request(
     if command == "list" {
         return Ok(Some(execute_list(request)?));
     }
-
     let config = Config::load()?;
     let is_jail = match command {
         "create" => {

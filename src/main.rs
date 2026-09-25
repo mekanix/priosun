@@ -1,7 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use nvtree::{nvtree_find, Nvtvalue};
-use priosun::{bhyve, config, jail, network, output, protocol, util};
+use priosun::{bhyve, config, jail, network, output, protocol, service, util};
 use std::io::Write;
 use tabled::Tabled;
 
@@ -23,7 +23,7 @@ enum Commands {
     },
     Destroy {
         #[command(subcommand)]
-        resource: DestroyResource,
+        resource: Option<DestroyResource>,
     },
     Start {
         name: String,
@@ -34,7 +34,7 @@ enum Commands {
         name: String,
     },
     Attach {
-        name: String,
+        name: Option<String>,
     },
     Dependencies {
         resource: DependencyResource,
@@ -49,9 +49,29 @@ enum Commands {
     },
     Version,
     NetworkInit,
+    Up,
+    Down,
+    Init {
+        #[arg(long, value_enum)]
+        provisioner: Option<Provisioner>,
+        #[arg(long, value_enum, default_value_t = Container::Jail)]
+        container: Container,
+        name: String,
+    },
     List {
         resource: ListResource,
     },
+}
+
+#[derive(Clone, ValueEnum)]
+enum Provisioner {
+    Ansible,
+}
+
+#[derive(Clone, ValueEnum)]
+enum Container {
+    Jail,
+    Vm,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -159,10 +179,10 @@ enum DestroyResource {
         resource: BaseDestroyResource,
     },
     Jail {
-        name: String,
+        name: Option<String>,
     },
     Vm {
-        name: String,
+        name: Option<String>,
     },
 }
 
@@ -182,8 +202,27 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    if std::env::var_os("PRIOSUN_DAEMON_EXEC").is_none() {
-        let args: Vec<String> = std::env::args().skip(1).collect();
+    let direct_command = matches!(&cli.command, Commands::Init { .. });
+    if std::env::var_os("PRIOSUN_DAEMON_EXEC").is_none() && !direct_command {
+        let args: Vec<String> = if matches!(&cli.command, Commands::Up) {
+            service::up_args()?
+        } else if matches!(&cli.command, Commands::Down) {
+            service::down_args()?
+        } else if matches!(&cli.command, Commands::Attach { name: None }) {
+            service::attach_args()?
+        } else if matches!(
+            &cli.command,
+            Commands::Destroy {
+                resource: Some(
+                    DestroyResource::Jail { name: None } | DestroyResource::Vm { name: None },
+                )
+            }
+        ) || matches!(&cli.command, Commands::Destroy { resource: None })
+        {
+            service::destroy_args()?
+        } else {
+            std::env::args().skip(1).collect()
+        };
         if args == ["list", "all"] {
             for resource in ["datasets", "volumes", "jails", "vms"] {
                 println!("=== {resource} ===");
@@ -313,11 +352,19 @@ fn main() -> Result<()> {
                 }
             }
         },
-        Commands::Destroy { resource } => {
+        Commands::Destroy {
+            resource: Some(resource),
+        } => {
             let config = config::Config::load()?;
             match resource {
-                DestroyResource::Vm { name } => bhyve::destroy(&name, &config)?,
-                DestroyResource::Jail { name } => jail::destroy(&name, &config)?,
+                DestroyResource::Vm { name } => {
+                    let name = name.ok_or_else(|| anyhow!("destroy requires a service name"))?;
+                    bhyve::destroy(&name, &config)?;
+                }
+                DestroyResource::Jail { name } => {
+                    let name = name.ok_or_else(|| anyhow!("destroy requires a service name"))?;
+                    jail::destroy(&name, &config)?;
+                }
                 DestroyResource::Base { resource } => match resource {
                     BaseDestroyResource::Jail { name } => jail::destroy_base(&name, &config)?,
                     BaseDestroyResource::Vm { .. } => {
@@ -329,6 +376,9 @@ fn main() -> Result<()> {
                     util::cmd::run("zfs", &["destroy", "-f", &zfs_name])?;
                 }
             }
+        }
+        Commands::Destroy { resource: None } => {
+            bail!("destroy requires a resource or an initialized service directory");
         }
         Commands::Start { name, attach } => {
             if attach {
@@ -387,6 +437,26 @@ fn main() -> Result<()> {
         Commands::NetworkInit => {
             let config = config::Config::load()?;
             network::init(&config)?;
+        }
+        Commands::Up => {
+            bail!("up must be run without daemon execution");
+        }
+        Commands::Down => {
+            bail!("down must be run without daemon execution");
+        }
+        Commands::Init {
+            provisioner,
+            container,
+            name,
+        } => {
+            let provisioner = provisioner.map(|value| match value {
+                Provisioner::Ansible => "ansible",
+            });
+            let container = match container {
+                Container::Jail => "jail",
+                Container::Vm => "vm",
+            };
+            service::init(&name, container, provisioner)?;
         }
         Commands::List { resource } => match resource {
             ListResource::Datasets => {
