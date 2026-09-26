@@ -25,6 +25,8 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "attach",
     "version",
     "network-init",
+    "up",
+    "down",
     "list",
     "dependencies",
     "enable",
@@ -352,6 +354,17 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
         "list" => args.push(string_field(request, "resource")?.to_string()),
         "version" => {}
         "network-init" => {}
+        "up" | "down" => {
+            args.extend([
+                "--container".to_string(),
+                string_field(request, "container")?.to_string(),
+                "--develop".to_string(),
+                bool_field(request, "develop")?.to_string(),
+                "--service-dir".to_string(),
+                string_field(request, "service_dir")?.to_string(),
+                string_field(request, "name")?.to_string(),
+            ]);
+        }
         _ => bail!("unsupported command: {command}"),
     }
     Ok(args)
@@ -495,6 +508,42 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
             if args.len() != 1 {
                 bail!("network-init does not accept arguments");
             }
+        }
+        "up" | "down" => {
+            let container = optional_option(&args[1..], "--container")?.unwrap_or("jail");
+            if container != "jail" {
+                bail!("unsupported container: {container}");
+            }
+            let develop = optional_option(&args[1..], "--develop")?.unwrap_or("false");
+            let develop = develop
+                .parse::<bool>()
+                .with_context(|| format!("invalid --develop value: {develop}"))?;
+            let service_dir = optional_option(&args[1..], "--service-dir")?
+                .ok_or_else(|| anyhow!("{command} requires --service-dir"))?;
+            let mut name = None;
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--container" | "--develop" | "--service-dir" => index += 2,
+                    value if value.starts_with('-') => {
+                        bail!("unsupported {command} option: {value}");
+                    }
+                    value => {
+                        if name.replace(value).is_some() {
+                            bail!("unexpected {command} arguments");
+                        }
+                        index += 1;
+                    }
+                }
+            }
+            let name = name.ok_or_else(|| anyhow!("{command} requires a service name"))?;
+            if name.starts_with('-') {
+                bail!("{command} requires a service name");
+            }
+            add_string(&mut request, "container", container);
+            add_bool(&mut request, "develop", develop);
+            add_string(&mut request, "service_dir", service_dir);
+            add_string(&mut request, "name", name);
         }
         _ => unreachable!(),
     }

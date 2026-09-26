@@ -1,4 +1,3 @@
-use crate::config::JAIL_BASE;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::fs;
@@ -10,6 +9,8 @@ const ANSIBLE_REQUIREMENTS: &str = "- onelove-roles.freebsd-common\n";
 struct Manifest {
     name: String,
     container: String,
+    #[serde(default)]
+    develop: bool,
 }
 
 pub fn init(name: &str, container: &str, provisioner: Option<&str>) -> Result<()> {
@@ -34,7 +35,7 @@ pub fn init(name: &str, container: &str, provisioner: Option<&str>) -> Result<()
         .unwrap_or_else(|| "[]".to_string());
     fs::write(
         service_dir.join("service.toml"),
-        format!("name = \"{name}\"\ncontainer = \"{container}\"\nprovisioners = {provisioners}\n"),
+        format!("name = \"{name}\"\ncontainer = \"{container}\"\ndevelop = false\nprovisioners = {provisioners}\n"),
     )?;
     fs::write(
         service_dir.join(".gitignore"),
@@ -57,17 +58,16 @@ pub fn up_args() -> Result<Vec<String>> {
             manifest.container
         );
     }
-    let jail_path = Path::new(JAIL_BASE).join(&manifest.name);
-    if jail_path.is_dir() {
-        Ok(vec!["start".to_string(), manifest.name])
-    } else {
-        Ok(vec![
-            "create".to_string(),
-            "jail".to_string(),
-            manifest.name,
-            "--start".to_string(),
-        ])
-    }
+    Ok(vec![
+        "up".to_string(),
+        "--container".to_string(),
+        manifest.container,
+        "--develop".to_string(),
+        manifest.develop.to_string(),
+        "--service-dir".to_string(),
+        std::env::current_dir()?.display().to_string(),
+        manifest.name,
+    ])
 }
 
 pub fn down_args() -> Result<Vec<String>> {
@@ -79,7 +79,16 @@ pub fn down_args() -> Result<Vec<String>> {
             manifest.container
         );
     }
-    Ok(vec!["stop".to_string(), manifest.name])
+    Ok(vec![
+        "down".to_string(),
+        "--container".to_string(),
+        manifest.container,
+        "--develop".to_string(),
+        manifest.develop.to_string(),
+        "--service-dir".to_string(),
+        std::env::current_dir()?.display().to_string(),
+        manifest.name,
+    ])
 }
 
 pub fn attach_args() -> Result<Vec<String>> {

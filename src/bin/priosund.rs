@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -380,6 +380,7 @@ fn execute_jail_request(
             nvtree_find(request, "type").map(|pair| &pair.value),
             Some(Nvtvalue::String(value)) if value == "jail" || value == "base"
         ),
+        "up" | "down" => true,
         _ => false,
     };
     let is_vm = match command {
@@ -433,6 +434,26 @@ fn execute_jail_request(
     });
     priosun::util::cmd::with_stream(callback, || {
         match command {
+            "up" => {
+                let name = string_field(request, "name")?;
+                let develop = bool_field(request, "develop")?;
+                let running = ::jail::RunningJail::from_name(name).is_ok();
+                if !jail::path_exists(name, &config) {
+                    jail::create(name, None, None, false, None, None, &config)?;
+                }
+                jail::set_enabled(name, !develop, &config)?;
+                if develop && !running {
+                    mount_development_dir(name, string_field(request, "service_dir")?)?;
+                }
+                jail::start(name, &config)?;
+            }
+            "down" => {
+                let name = string_field(request, "name")?;
+                jail::stop(name, &config)?;
+                if bool_field(request, "develop")? {
+                    unmount_development_dir(name);
+                }
+            }
             "create" => {
                 let name = string_field(request, "name")?;
                 let resource_type = string_field(request, "type")?;
@@ -538,6 +559,25 @@ fn create_vm(request: &nvtree::Nvtree, name: &str, config: &Config) -> Result<()
         },
         config,
     )
+}
+
+fn mount_development_dir(name: &str, service_dir: &str) -> Result<()> {
+    let source = Path::new(service_dir);
+    if !source.is_dir() {
+        bail!("development service directory does not exist: {service_dir}");
+    }
+    let target = Path::new(JAIL_BASE).join(name).join("usr/src");
+    fs::create_dir_all(&target)?;
+    let source = source.display().to_string();
+    let target = target.display().to_string();
+    cmd::message(&format!("Mounting {source} at {target}"));
+    cmd::run("mount", &["-t", "nullfs", &source, &target])?;
+    Ok(())
+}
+
+fn unmount_development_dir(name: &str) {
+    let target = Path::new(JAIL_BASE).join(name).join("usr/src");
+    let _ = cmd::run("umount", &[&target.display().to_string()]);
 }
 
 fn optional_string<'a>(request: &'a nvtree::Nvtree, name: &str) -> Option<&'a str> {

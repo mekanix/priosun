@@ -16,6 +16,7 @@ pub fn init(config: &Config) -> Result<()> {
         bail!("use_ipv4 or use_ipv6 must be enabled");
     }
     configure_host_network(config)?;
+    configure_nfs(config)?;
     let root = Path::new(JAIL_BASE).join(NETWORK_JAIL);
     if !jail::path_exists(NETWORK_JAIL, config) {
         jail::create(NETWORK_JAIL, None, None, false, None, None, config)?;
@@ -27,6 +28,58 @@ pub fn init(config: &Config) -> Result<()> {
     mount_host_unbound(&root)?;
     jail::start(NETWORK_JAIL, config)?;
     configure_host_unbound(config)
+}
+
+fn configure_nfs(config: &Config) -> Result<()> {
+    let projects_dir = &config.projects_dir;
+    if !projects_dir.is_dir() {
+        bail!("projects_dir does not exist: {}", projects_dir.display());
+    }
+    if !config.use_ipv4 {
+        bail!("NFS setup currently requires use_ipv4 = true");
+    }
+    let bridge_ip = config
+        .bridge_ip
+        .parse::<Ipv4Addr>()
+        .with_context(|| format!("invalid bridge_ip: {}", config.bridge_ip))?;
+    let octets = bridge_ip.octets();
+    let bridge_network = format!("{}.{}.{}.0", octets[0], octets[1], octets[2]);
+
+    crate::util::cmd::message("Configuring NFS server");
+    crate::util::cmd::run(
+        "sysrc",
+        &[
+            "mountd_enable=YES",
+            "mountd_flags=-r",
+            "nfs_server_enable=YES",
+            "nfsv4_server_enable=YES",
+            "rpcbind_enable=YES",
+        ],
+    )?;
+
+    let mut exports = if Path::new("/etc/exports").exists() {
+        fs::read_to_string("/etc/exports")?
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("V4:"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let export = format!(
+        "{} -alldirs -network {} -mask 255.255.255.0 -maproot=root",
+        projects_dir.display(),
+        bridge_network
+    );
+    if !exports.iter().any(|line| line == &export) {
+        exports.push(export);
+    }
+    exports.push("V4: /".to_string());
+    fs::write("/etc/exports", format!("{}\n", exports.join("\n")))?;
+    crate::util::cmd::run("service", &["rpcbind", "restart"])?;
+    crate::util::cmd::run("service", &["nfsd", "restart"])?;
+    crate::util::cmd::run("service", &["mountd", "restart"])?;
+    Ok(())
 }
 
 fn mount_host_unbound(root: &Path) -> Result<()> {
@@ -123,7 +176,7 @@ fn configure_network(root: &Path, config: &Config) -> Result<()> {
 }
 
 fn configure_services(root: &Path, config: &Config) -> Result<()> {
-    let domain = domain(config)?;
+    let domain = host_hostname()?;
     let hostname = host_hostname()?;
     let network_ip = config.network_ip.parse::<Ipv4Addr>()?;
     let bridge_ip = config.bridge_ip.parse::<Ipv4Addr>()?;
@@ -476,13 +529,6 @@ fn generate_ddns_key() -> Result<String> {
     Ok(key)
 }
 
-fn domain(config: &Config) -> Result<String> {
-    if !config.domain.trim().is_empty() {
-        return Ok(config.domain.trim().to_string());
-    }
-    host_hostname()
-}
-
 fn host_hostname() -> Result<String> {
     let output = Command::new("hostname").output()?;
     if !output.status.success() {
@@ -496,7 +542,7 @@ fn host_hostname() -> Result<String> {
 }
 
 fn configure_host_unbound(config: &Config) -> Result<()> {
-    let domain = domain(config)?;
+    let domain = host_hostname()?;
     let bridge_ip = config.bridge_ip.parse::<Ipv4Addr>()?;
     let network_ip = config.network_ip.parse::<Ipv4Addr>()?;
     let bridge_ip6 = format!("{}{}", config.ipv6_prefix, config.bridge_ip6).parse::<Ipv6Addr>()?;

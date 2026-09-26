@@ -115,6 +115,8 @@ configuration and are not managed as running jails.
 
 `init <service>` creates a service directory with a `service.toml` manifest.
 Services default to running in a jail; use `--container vm` to select a VM.
+The manifest also contains `develop = false`; setting it to `true` mounts the
+service directory at `/usr/src` and disables automatic startup for that jail.
 Provisioners are optional. The first supported provisioner is Ansible:
 
 ```sh
@@ -200,16 +202,22 @@ priosun list vms
 priosun list all
 ```
 
-The supported commands are `create`, `destroy`, `start`, `stop`, `attach`, `enable`,
-`disable`, `dependencies`, `network-init`, `version`, and `list`.
+The supported commands are `create`, `destroy`, `start`, `stop`, `attach`, `up`,
+`down`, `enable`, `disable`, `dependencies`, `network-init`, `version`, and `list`.
 
 The `network-init` command configures the bridge in `/etc/rc.conf` and activates
 it immediately, then creates the managed `network` jail when necessary, installs Kea
 DHCP and Knot DNS, writes their configuration, and starts the jail. Its address
 is controlled by `network_ip` and `network_ip6`; the bridge gateway is supplied
-by `bridge_ip` and `bridge_ip6`. If `domain` is empty, the host's domain is
-used. It also configures the host's `local_unbound` service and `resolvconf` to
-forward the managed domain and reverse zones to Knot in the network jail.
+by `bridge_ip` and `bridge_ip6`. The host's system hostname is used as the DNS
+domain for the managed network. It also configures the host's `local_unbound`
+service and `resolvconf` to forward the managed domain and reverse zones to Knot in the network jail. It
+also enables the host NFS server and exports `projects_dir` to the jail/VM
+network for development mounts. `projects_dir` is the host-side root directory
+containing service source trees; a VM service with `develop = true` uses this
+export to access its source directory at `/usr/src`. It defaults to
+`/var/empty`, which provides an empty export until a projects directory is
+configured.
 Set `use_ipv4` or `use_ipv6` to `false` to disable that address family; at
 least one must remain enabled.
 
