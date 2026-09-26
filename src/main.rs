@@ -51,11 +51,14 @@ enum Commands {
     NetworkInit,
     Up,
     Down,
+    Provision,
     Init {
         #[arg(long, value_enum)]
         provisioner: Option<Provisioner>,
         #[arg(long, value_enum, default_value_t = Container::Jail)]
         container: Container,
+        #[arg(long)]
+        develop: bool,
         name: String,
     },
     List {
@@ -208,6 +211,8 @@ fn main() -> Result<()> {
             service::up_args()?
         } else if matches!(&cli.command, Commands::Down) {
             service::down_args()?
+        } else if matches!(&cli.command, Commands::Provision) {
+            service::provision_args()?
         } else if matches!(&cli.command, Commands::Attach { name: None }) {
             service::attach_args()?
         } else if matches!(
@@ -444,9 +449,13 @@ fn main() -> Result<()> {
         Commands::Down => {
             bail!("down must be run without daemon execution");
         }
+        Commands::Provision => {
+            bail!("provision must be run without daemon execution");
+        }
         Commands::Init {
             provisioner,
             container,
+            develop,
             name,
         } => {
             let provisioner = provisioner.map(|value| match value {
@@ -456,7 +465,7 @@ fn main() -> Result<()> {
                 Container::Jail => "jail",
                 Container::Vm => "vm",
             };
-            service::init(&name, container, provisioner)?;
+            service::init(&name, container, provisioner, develop)?;
         }
         Commands::List { resource } => match resource {
             ListResource::Datasets => {

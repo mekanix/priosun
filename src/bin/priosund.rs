@@ -6,7 +6,7 @@ use priosun::{
     config::{
         Config, BASE_DATASET_PATH, BASE_PATH, IMAGE_BASE, JAIL_BASE, LOG_BASE, SEED_BASE, VM_BASE,
     },
-    dependency, jail, network,
+    dependency, jail, metadata, network, service,
     util::cmd,
 };
 use std::fs;
@@ -92,6 +92,22 @@ fn start_enabled(config: &Config) -> Result<()> {
 fn handle(mut stream: UnixStream) -> Result<()> {
     let request = protocol::receive_request(&mut stream)?;
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
+    if matches!(
+        nvtree_find(&request, "command").map(|pair| &pair.value),
+        Some(Nvtvalue::String(command)) if command == "provision"
+    ) {
+        let config = Config::load()?;
+        let result = execute_provision_request(&request, &config);
+        let response = match result {
+            Ok((stdout, stderr)) => protocol::success(0, &stdout, &stderr),
+            Err(error) => protocol::error(&format!("{error:#}")),
+        };
+        protocol::send_response(
+            &mut writer.lock().expect("response writer lock poisoned"),
+            &response,
+        )?;
+        return Ok(());
+    }
     if matches!(
         nvtree_find(&request, "command").map(|pair| &pair.value),
         Some(Nvtvalue::String(command)) if command == "network-init"
@@ -192,6 +208,50 @@ fn handle(mut stream: UnixStream) -> Result<()> {
         &response,
     )?;
     Ok(())
+}
+
+fn execute_provision_request(
+    request: &nvtree::Nvtree,
+    config: &Config,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let service_dir = Path::new(string_field(request, "service_dir")?);
+    let provisioners = string_array_field(request, "provisioners")?;
+    let (_, transcript) = cmd::capture(|| {
+        provision_service(
+            service_dir,
+            string_field(request, "container")?,
+            string_field(request, "name")?,
+            provisioners,
+            config,
+        )
+    })?;
+    Ok((transcript.stdout, transcript.stderr))
+}
+
+fn provision_service(
+    service_dir: &Path,
+    container: &str,
+    name: &str,
+    provisioners: &[String],
+    config: &Config,
+) -> Result<()> {
+    service::provision_at(service_dir, provisioners)?;
+    let dataset = service_dataset(container, name, config)?;
+    metadata::set(&dataset, "provisioned", "true")?;
+    Ok(())
+}
+
+fn service_dataset(container: &str, name: &str, config: &Config) -> Result<String> {
+    let base = match container {
+        "jail" => JAIL_BASE,
+        "vm" => VM_BASE,
+        other => bail!("unsupported container: {other}"),
+    };
+    Ok(format!(
+        "{}{}",
+        config.zfs_pool,
+        Path::new(base).join(name).display()
+    ))
 }
 
 fn execute_attach(
@@ -446,6 +506,19 @@ fn execute_jail_request(
                     mount_development_dir(name, string_field(request, "service_dir")?)?;
                 }
                 jail::start(name, &config)?;
+                let dataset = service_dataset("jail", name, &config)?;
+                if !metadata::get_bool(&dataset, "provisioned", false)? {
+                    let provisioners = string_array_field(request, "provisioners")?;
+                    if !provisioners.is_empty() {
+                        provision_service(
+                            Path::new(string_field(request, "service_dir")?),
+                            "jail",
+                            name,
+                            provisioners,
+                            &config,
+                        )?;
+                    }
+                }
             }
             "down" => {
                 let name = string_field(request, "name")?;
@@ -612,6 +685,13 @@ fn string_field<'a>(request: &'a nvtree::Nvtree, name: &str) -> Result<&'a str> 
     match nvtree_find(request, name).map(|pair| &pair.value) {
         Some(Nvtvalue::String(value)) => Ok(value),
         _ => bail!("request is missing string field {name}"),
+    }
+}
+
+fn string_array_field<'a>(request: &'a nvtree::Nvtree, name: &str) -> Result<&'a [String]> {
+    match nvtree_find(request, name).map(|pair| &pair.value) {
+        Some(Nvtvalue::StringArray(value)) => Ok(value),
+        _ => bail!("request is missing string array field {name}"),
     }
 }
 

@@ -334,6 +334,7 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
     crate::metadata::set(&dataset, "memory", options.memory.trim())?;
     crate::metadata::set(&dataset, "dependencies", "")?;
     crate::metadata::set(&dataset, "enabled", "true")?;
+    crate::metadata::set(&dataset, "provisioned", "false")?;
     crate::metadata::set(
         &dataset,
         &interface_mac_property(VIRTIO_NET_INTERFACE),

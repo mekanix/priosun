@@ -104,6 +104,7 @@ priosun create vm debian13 \
 priosun init web
 priosun init --provisioner ansible --container vm web-vm
 cd web && priosun up
+cd web && priosun provision
 cd web && priosun down
 cd web && priosun destroy
 ```
@@ -120,7 +121,7 @@ service directory at `/usr/src` and disables automatic startup for that jail.
 Provisioners are optional. The first supported provisioner is Ansible:
 
 ```sh
-priosun init --provisioner ansible myservice
+priosun init --provisioner ansible --develop myservice
 ```
 
 This creates the Ansible requirements, playbook, inventory, group variables, and
@@ -128,8 +129,17 @@ roles directories inside the service directory.
 
 Run `priosun up` from an initialized jail service directory to create and start
 its jail through the Priosun daemon. Run `priosun down` in the same directory to
-stop it, or `priosun destroy` to stop and remove it. VM services are not
+stop it, or `priosun destroy` to stop and remove it. Run `priosun provision` to
+ask the Priosun daemon to execute the provisioner configured in `service.toml`;
+for Ansible, the daemon installs `ansible/requirements.yml` and runs
+`ansible/site.yml` using `ansible/inventory/inventory`. VM services are not
 supported by `up`, `down`, or manifest-based `destroy` yet.
+
+Jail and VM datasets have a `priosun:provisioned` ZFS property. It is set to
+`false` when the resource is created and changed to `true` after provisioning
+succeeds. If it is `false`, `priosun up` runs the configured provisioners after
+starting the resource; a failed provisioning run leaves it `false` so the next
+`up` retries it.
 
 The optional `--version MAJOR.MINOR` selects the PkgBase release and records
 the matching release metadata for the jail, such as `15.0` or `15.1`.

@@ -11,9 +11,11 @@ struct Manifest {
     container: String,
     #[serde(default)]
     develop: bool,
+    #[serde(default)]
+    provisioners: Vec<String>,
 }
 
-pub fn init(name: &str, container: &str, provisioner: Option<&str>) -> Result<()> {
+pub fn init(name: &str, container: &str, provisioner: Option<&str>, develop: bool) -> Result<()> {
     validate_name(name)?;
     if !matches!(container, "jail" | "vm") {
         bail!("unsupported container: {container}");
@@ -35,7 +37,7 @@ pub fn init(name: &str, container: &str, provisioner: Option<&str>) -> Result<()
         .unwrap_or_else(|| "[]".to_string());
     fs::write(
         service_dir.join("service.toml"),
-        format!("name = \"{name}\"\ncontainer = \"{container}\"\ndevelop = false\nprovisioners = {provisioners}\n"),
+        format!("name = \"{name}\"\ncontainer = \"{container}\"\ndevelop = {develop}\nprovisioners = {provisioners}\n"),
     )?;
     fs::write(
         service_dir.join(".gitignore"),
@@ -58,7 +60,7 @@ pub fn up_args() -> Result<Vec<String>> {
             manifest.container
         );
     }
-    Ok(vec![
+    let mut args = vec![
         "up".to_string(),
         "--container".to_string(),
         manifest.container,
@@ -66,8 +68,12 @@ pub fn up_args() -> Result<Vec<String>> {
         manifest.develop.to_string(),
         "--service-dir".to_string(),
         std::env::current_dir()?.display().to_string(),
-        manifest.name,
-    ])
+    ];
+    for provisioner in manifest.provisioners {
+        args.extend(["--provisioner".to_string(), provisioner]);
+    }
+    args.push(manifest.name);
+    Ok(args)
 }
 
 pub fn down_args() -> Result<Vec<String>> {
@@ -89,6 +95,74 @@ pub fn down_args() -> Result<Vec<String>> {
         std::env::current_dir()?.display().to_string(),
         manifest.name,
     ])
+}
+
+pub fn provision_args() -> Result<Vec<String>> {
+    let manifest = load_manifest("provision")?;
+    if manifest.provisioners.is_empty() {
+        bail!("no provisioner is configured in service.toml");
+    }
+    if manifest
+        .provisioners
+        .iter()
+        .any(|provisioner| provisioner != "ansible")
+    {
+        let unsupported = manifest
+            .provisioners
+            .iter()
+            .find(|provisioner| provisioner.as_str() != "ansible")
+            .expect("unsupported provisioner exists");
+        bail!("unsupported provisioner in service.toml: {unsupported}");
+    }
+    let mut args = vec![
+        "provision".to_string(),
+        "--service-dir".to_string(),
+        std::env::current_dir()?.display().to_string(),
+        "--container".to_string(),
+        manifest.container.clone(),
+        "--name".to_string(),
+        manifest.name.clone(),
+    ];
+    for provisioner in manifest.provisioners {
+        args.extend(["--provisioner".to_string(), provisioner]);
+    }
+    Ok(args)
+}
+
+pub fn provision_at(service_dir: &Path, provisioners: &[String]) -> Result<()> {
+    if !service_dir.is_dir() {
+        bail!(
+            "service directory does not exist: {}",
+            service_dir.display()
+        );
+    }
+    if provisioners.is_empty() {
+        bail!("no provisioner was supplied");
+    }
+    for provisioner in provisioners {
+        match provisioner.as_str() {
+            "ansible" => {
+                crate::util::cmd::run_in_dir(
+                    "ansible-galaxy",
+                    &[
+                        "install",
+                        "-r",
+                        "ansible/requirements.yml",
+                        "-p",
+                        "ansible/roles",
+                    ],
+                    service_dir,
+                )?;
+                crate::util::cmd::run_in_dir(
+                    "ansible-playbook",
+                    &["-i", "ansible/inventory/inventory", "ansible/site.yml"],
+                    service_dir,
+                )?;
+            }
+            other => bail!("unsupported provisioner: {other}"),
+        }
+    }
+    Ok(())
 }
 
 pub fn attach_args() -> Result<Vec<String>> {

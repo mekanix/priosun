@@ -116,6 +116,50 @@ pub fn run(program: &str, args: &[&str]) -> Result<Output> {
     Ok(output)
 }
 
+pub fn run_in_dir(program: &str, args: &[&str], directory: &Path) -> Result<Output> {
+    debug!(
+        "Running in {}: {} {}",
+        directory.display(),
+        program,
+        args.join(" ")
+    );
+    if let Some(callback) = STREAM.with(|stream| stream.borrow().clone()) {
+        return run_streaming_in_dir(program, args, callback, Some(directory));
+    }
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(directory)
+        .output()
+        .with_context(|| format!("failed to execute {} {}", program, args.join(" ")))?;
+    TRANSCRIPT.with(|transcript| {
+        if let Some(transcript) = transcript.borrow_mut().as_mut() {
+            transcript.stdout.extend(
+                format!(
+                    "$ (cd {} && {} {})\n",
+                    directory.display(),
+                    program,
+                    args.join(" ")
+                )
+                .as_bytes(),
+            );
+            transcript.stdout.extend(&output.stdout);
+            transcript.stderr.extend(&output.stderr);
+        }
+    });
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "command failed in {}: {} {} (exit code: {:?})\nstderr: {}",
+            directory.display(),
+            program,
+            args.join(" "),
+            output.status.code(),
+            stderr.trim()
+        );
+    }
+    Ok(output)
+}
+
 pub fn run_with_stdin(program: &str, args: &[&str], input: &[u8]) -> Result<Output> {
     debug!("Running: {} {}", program, args.join(" "));
     let callback = STREAM.with(|stream| stream.borrow().clone());
@@ -306,16 +350,30 @@ fn run_streaming(
     args: &[&str],
     callback: Arc<dyn Fn(CommandEvent) + Send + Sync>,
 ) -> Result<Output> {
+    run_streaming_in_dir(program, args, callback, None)
+}
+
+fn run_streaming_in_dir(
+    program: &str,
+    args: &[&str],
+    callback: Arc<dyn Fn(CommandEvent) + Send + Sync>,
+    directory: Option<&Path>,
+) -> Result<Output> {
     callback(CommandEvent {
         program: program.to_string(),
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         stream: CommandStream::Command,
         data: Vec::new(),
     });
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to execute {} {}", program, args.join(" ")))?;
     let stdout = child.stdout.take().expect("stdout was piped");

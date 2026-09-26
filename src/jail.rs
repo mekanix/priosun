@@ -96,6 +96,7 @@ pub fn create(
         let dataset = format!("{}{}", config.zfs_pool, jail_dir.display());
         crate::metadata::set(&dataset, "enabled", "true")?;
         crate::metadata::set(&dataset, "dependencies", "")?;
+        crate::metadata::set(&dataset, "provisioned", "false")?;
     }
 
     // Set up pkg repos

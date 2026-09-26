@@ -1,5 +1,10 @@
 # Agent Instructions: `daw`
 
+## Command Execution
+
+All `priosun` commands must be sent through `priosund`, except `init`, which
+is intentionally handled directly by the client.
+
 ## End-of-Change Routine
 
 After every code change in this directory, run these commands in order:

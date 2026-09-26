@@ -27,6 +27,7 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "network-init",
     "up",
     "down",
+    "provision",
     "list",
     "dependencies",
     "enable",
@@ -362,8 +363,26 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
                 bool_field(request, "develop")?.to_string(),
                 "--service-dir".to_string(),
                 string_field(request, "service_dir")?.to_string(),
+            ]);
+            if command == "up" {
+                for provisioner in string_array_field(request, "provisioners")? {
+                    args.extend(["--provisioner".to_string(), provisioner.clone()]);
+                }
+            }
+            args.push(string_field(request, "name")?.to_string());
+        }
+        "provision" => {
+            args.extend([
+                "--service-dir".to_string(),
+                string_field(request, "service_dir")?.to_string(),
+                "--container".to_string(),
+                string_field(request, "container")?.to_string(),
+                "--name".to_string(),
                 string_field(request, "name")?.to_string(),
             ]);
+            for provisioner in string_array_field(request, "provisioners")? {
+                args.extend(["--provisioner".to_string(), provisioner.clone()]);
+            }
         }
         _ => bail!("unsupported command: {command}"),
     }
@@ -520,11 +539,17 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
                 .with_context(|| format!("invalid --develop value: {develop}"))?;
             let service_dir = optional_option(&args[1..], "--service-dir")?
                 .ok_or_else(|| anyhow!("{command} requires --service-dir"))?;
+            let provisioners = if command == "up" {
+                repeated_options(&args[1..], "--provisioner")?
+            } else {
+                Vec::new()
+            };
             let mut name = None;
             let mut index = 1;
             while index < args.len() {
                 match args[index].as_str() {
                     "--container" | "--develop" | "--service-dir" => index += 2,
+                    "--provisioner" => index += 2,
                     value if value.starts_with('-') => {
                         bail!("unsupported {command} option: {value}");
                     }
@@ -543,7 +568,38 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
             add_string(&mut request, "container", container);
             add_bool(&mut request, "develop", develop);
             add_string(&mut request, "service_dir", service_dir);
+            nvtree_add(
+                &mut request,
+                nvtree::Nvtpair {
+                    flags: 0,
+                    name: "provisioners".to_string(),
+                    value: Nvtvalue::StringArray(provisioners),
+                },
+            );
             add_string(&mut request, "name", name);
+        }
+        "provision" => {
+            let service_dir = named_option(&args[1..], "--service-dir")?;
+            let container = named_option(&args[1..], "--container")?;
+            if container != "jail" && container != "vm" {
+                bail!("unsupported container: {container}");
+            }
+            let name = named_option(&args[1..], "--name")?;
+            add_string(&mut request, "service_dir", service_dir);
+            add_string(&mut request, "container", container);
+            add_string(&mut request, "name", name);
+            let provisioners = repeated_options(&args[1..], "--provisioner")?;
+            if provisioners.is_empty() {
+                bail!("provision requires at least one --provisioner");
+            }
+            nvtree_add(
+                &mut request,
+                nvtree::Nvtpair {
+                    flags: 0,
+                    name: "provisioners".to_string(),
+                    value: Nvtvalue::StringArray(provisioners),
+                },
+            );
         }
         _ => unreachable!(),
     }
@@ -679,6 +735,26 @@ fn optional_option<'a>(args: &'a [String], option: &str) -> Result<Option<&'a st
 
 fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|arg| arg == flag)
+}
+
+fn repeated_options(args: &[String], option: &str) -> Result<Vec<String>> {
+    let mut values = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| anyhow!("{option} requires a value"))?;
+            if value.starts_with('-') {
+                bail!("{option} requires a value");
+            }
+            values.push(value.clone());
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(values)
 }
 
 fn ensure_no_extra(args: &[String], from: usize) -> Result<()> {
