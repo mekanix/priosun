@@ -19,7 +19,18 @@ pub fn init(config: &Config) -> Result<()> {
     configure_nfs(config)?;
     let root = Path::new(JAIL_BASE).join(NETWORK_JAIL);
     if !jail::path_exists(NETWORK_JAIL, config) {
-        jail::create(NETWORK_JAIL, None, None, false, None, None, config)?;
+        jail::create(
+            NETWORK_JAIL,
+            None,
+            None,
+            (false, None),
+            None,
+            jail::UserIdentity {
+                uid: unsafe { libc::getuid() },
+                gid: unsafe { libc::getgid() },
+            },
+            config,
+        )?;
     }
 
     install_packages(&root)?;

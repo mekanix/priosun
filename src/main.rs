@@ -277,9 +277,12 @@ fn main() -> Result<()> {
                         &name,
                         set.as_deref(),
                         version.as_deref(),
-                        false,
-                        base.as_deref(),
+                        (false, base.as_deref()),
                         ssh_key.as_deref(),
+                        jail::UserIdentity {
+                            uid: unsafe { libc::getuid() },
+                            gid: unsafe { libc::getgid() },
+                        },
                         &config,
                     )?;
                     if start {
@@ -300,9 +303,12 @@ fn main() -> Result<()> {
                             &name,
                             set.as_deref(),
                             version.as_deref(),
-                            true,
+                            (true, None),
                             None,
-                            None,
+                            jail::UserIdentity {
+                                uid: unsafe { libc::getuid() },
+                                gid: unsafe { libc::getgid() },
+                            },
                             &config,
                         )
                     })?;
@@ -346,6 +352,8 @@ fn main() -> Result<()> {
                         tpm,
                         cpus,
                         memory: &memory,
+                        provision_uid: unsafe { libc::getuid() },
+                        provision_gid: unsafe { libc::getgid() },
                     },
                     &config,
                 )?;

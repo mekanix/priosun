@@ -18,6 +18,12 @@ pub fn check(_name: &str, chroot: &Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+pub struct UserIdentity {
+    pub uid: u32,
+    pub gid: u32,
+}
+
 fn qualified_hostname(name: &str) -> Result<String> {
     let output = Command::new("hostname").output()?;
     if !output.status.success() {
@@ -41,11 +47,12 @@ pub fn create(
     name: &str,
     set: Option<&str>,
     version: Option<&str>,
-    base: bool,
-    from_base: Option<&str>,
+    base_options: (bool, Option<&str>),
     ssh_key: Option<&str>,
+    provision_identity: UserIdentity,
     config: &Config,
 ) -> Result<()> {
+    let (base, from_base) = base_options;
     let parsed_version = version.map(parse_version).transpose()?;
     cmd::message(&format!("Creating jail {name}"));
     let hostname = qualified_hostname(name)?;
@@ -167,6 +174,15 @@ pub fn create(
     if !base {
         cmd::message("Creating the provision user");
         let chroot_path = chroot.display().to_string();
+        let group_args = [
+            "-R",
+            chroot_path.as_str(),
+            "groupadd",
+            "provision",
+            "-g",
+            &provision_identity.gid.to_string(),
+        ];
+        cmd::run("pw", &group_args)?;
         let user_args = [
             "-R",
             chroot_path.as_str(),
@@ -177,6 +193,10 @@ pub fn create(
             "/bin/sh",
             "-G",
             "wheel",
+            "-u",
+            &provision_identity.uid.to_string(),
+            "-g",
+            &provision_identity.gid.to_string(),
             "-h",
             "0",
         ];

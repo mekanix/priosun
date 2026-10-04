@@ -212,6 +212,8 @@ pub struct VmCreateOptions<'a> {
     pub tpm: bool,
     pub cpus: u32,
     pub memory: &'a str,
+    pub provision_uid: u32,
+    pub provision_gid: u32,
 }
 
 fn validate_name(name: &str) -> Result<()> {
@@ -346,12 +348,26 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
         }
     }
     if options.cloud_init {
-        create_seed(name, options.os, options.ssh_key, config)?;
+        create_seed(
+            name,
+            options.os,
+            options.ssh_key,
+            options.provision_uid,
+            options.provision_gid,
+            config,
+        )?;
     }
     Ok(())
 }
 
-fn create_seed(name: &str, os: &str, ssh_key: Option<&str>, config: &Config) -> Result<()> {
+fn create_seed(
+    name: &str,
+    os: &str,
+    ssh_key: Option<&str>,
+    provision_uid: u32,
+    provision_gid: u32,
+    config: &Config,
+) -> Result<()> {
     if let Some(ssh_key) = ssh_key {
         if ssh_key.trim().is_empty() || ssh_key.contains(['\n', '\r']) {
             bail!("SSH public key must be a single non-empty line");
@@ -407,6 +423,8 @@ package_upgrade: true
 users:
   - default
   - name: provision
+    uid: {provision_uid}
+    gid: {provision_gid}
     plain_text_passwd: "provision"
     lock_passwd: false
     groups: [adm, sudo]
@@ -443,6 +461,8 @@ package_upgrade: true
 users:
   - default
   - name: provision
+    uid: {provision_uid}
+    gid: {provision_gid}
     plain_text_passwd: provision
     lock_passwd: false
     groups: [sudo]
@@ -471,6 +491,23 @@ power_state:
             )?;
         } else if os == "fedora" {
             fs::write(
+                mountpoint.join("network-config"),
+                format!(
+                    r#"version: 2
+renderer: NetworkManager
+ethernets:
+  priosun:
+    match:
+      name: "en*"
+    dhcp4: true
+    dhcp4-overrides:
+      send-hostname: true
+      hostname: "{name}"
+"#
+                ),
+            )?;
+            validate_yaml(&mountpoint.join("network-config"))?;
+            fs::write(
                 mountpoint.join("user-data"),
                 format!(
                     r#"#cloud-config
@@ -479,6 +516,8 @@ package_upgrade: true
 users:
   - default
   - name: provision
+    uid: {provision_uid}
+    gid: {provision_gid}
     plain_text_passwd: provision
     lock_passwd: false
     groups: [wheel]
@@ -507,6 +546,8 @@ power_state:
 users:
   - default
   - name: provision
+    uid: {provision_uid}
+    gid: {provision_gid}
     plain_text_passwd: "provision"
     lock_passwd: false
     groups: "wheel"

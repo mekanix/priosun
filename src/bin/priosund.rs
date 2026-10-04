@@ -499,7 +499,18 @@ fn execute_jail_request(
                 let develop = bool_field(request, "develop")?;
                 let running = ::jail::RunningJail::from_name(name).is_ok();
                 if !jail::path_exists(name, &config) {
-                    jail::create(name, None, None, false, None, None, &config)?;
+                    jail::create(
+                        name,
+                        None,
+                        None,
+                        (false, None),
+                        None,
+                        jail::UserIdentity {
+                            uid: caller_id(request, "caller_uid", unsafe { libc::getuid() })?,
+                            gid: caller_id(request, "caller_gid", unsafe { libc::getgid() })?,
+                        },
+                        &config,
+                    )?;
                 }
                 jail::set_enabled(name, !develop, &config)?;
                 if develop && !running {
@@ -554,9 +565,12 @@ fn execute_jail_request(
                         name,
                         set,
                         version,
-                        base,
-                        from_base,
+                        (base, from_base),
                         optional_string(request, "ssh_key"),
+                        jail::UserIdentity {
+                            uid: caller_id(request, "caller_uid", unsafe { libc::getuid() })?,
+                            gid: caller_id(request, "caller_gid", unsafe { libc::getgid() })?,
+                        },
                         &config,
                     )?;
                     if !base && optional_bool(request, "start") == Some(true) {
@@ -629,6 +643,8 @@ fn create_vm(request: &nvtree::Nvtree, name: &str, config: &Config) -> Result<()
             tpm: bool_field(request, "tpm")?,
             cpus,
             memory,
+            provision_uid: caller_id(request, "caller_uid", unsafe { libc::getuid() })?,
+            provision_gid: caller_id(request, "caller_gid", unsafe { libc::getgid() })?,
         },
         config,
     )
@@ -672,6 +688,13 @@ fn optional_number(request: &nvtree::Nvtree, name: &str) -> Option<u64> {
         Nvtvalue::Number(value) => Some(*value),
         _ => None,
     })
+}
+
+fn caller_id(request: &nvtree::Nvtree, name: &str, default: u32) -> Result<u32> {
+    optional_number(request, name)
+        .map(|value| u32::try_from(value).with_context(|| format!("{name} is out of range")))
+        .transpose()
+        .map(|value| value.unwrap_or(default))
 }
 
 fn bool_field(request: &nvtree::Nvtree, name: &str) -> Result<bool> {

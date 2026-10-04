@@ -603,6 +603,10 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
         }
         _ => unreachable!(),
     }
+    if command == "create" || command == "up" {
+        add_number(&mut request, "caller_uid", unsafe { libc::getuid() } as u64);
+        add_number(&mut request, "caller_gid", unsafe { libc::getgid() } as u64);
+    }
     Ok(request)
 }
 
