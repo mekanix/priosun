@@ -32,6 +32,29 @@ enum Commands {
         #[arg(long)]
         wait: bool,
     },
+    Set {
+        name: String,
+        #[arg(long)]
+        cpus: Option<u32>,
+        #[arg(long)]
+        memory: Option<String>,
+        #[arg(long, conflicts_with = "remove_cd")]
+        iso: Option<String>,
+        #[arg(long)]
+        remove_cd: bool,
+        #[arg(long)]
+        vnc_port: Option<u16>,
+        #[arg(long)]
+        vnc_bind: Option<String>,
+        #[arg(long)]
+        vnc_width: Option<u32>,
+        #[arg(long)]
+        vnc_height: Option<u32>,
+        #[arg(long, conflicts_with = "no_tpm")]
+        tpm: bool,
+        #[arg(long)]
+        no_tpm: bool,
+    },
     Stop {
         name: String,
     },
@@ -410,6 +433,42 @@ fn main() -> Result<()> {
             } else {
                 bail!("no VM or jail exists with this name: {}", name);
             }
+        }
+        Commands::Set {
+            name,
+            cpus,
+            memory,
+            iso,
+            remove_cd,
+            vnc_port,
+            vnc_bind,
+            vnc_width,
+            vnc_height,
+            tpm,
+            no_tpm,
+        } => {
+            let config = config::Config::load()?;
+            bhyve::set_vm_options(
+                &name,
+                &bhyve::VmSetOptions {
+                    cpus,
+                    memory: memory.as_deref(),
+                    iso: iso.as_deref(),
+                    remove_cd,
+                    vnc_port,
+                    vnc_bind: vnc_bind.as_deref(),
+                    vnc_width,
+                    vnc_height,
+                    tpm: if tpm {
+                        Some(true)
+                    } else if no_tpm {
+                        Some(false)
+                    } else {
+                        None
+                    },
+                },
+                &config,
+            )?;
         }
         Commands::Stop { name } => {
             let config = config::Config::load()?;

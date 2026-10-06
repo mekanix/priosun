@@ -218,6 +218,18 @@ pub struct VmCreateOptions<'a> {
     pub provision_gid: u32,
 }
 
+pub struct VmSetOptions<'a> {
+    pub cpus: Option<u32>,
+    pub memory: Option<&'a str>,
+    pub iso: Option<&'a str>,
+    pub remove_cd: bool,
+    pub vnc_port: Option<u16>,
+    pub vnc_bind: Option<&'a str>,
+    pub vnc_width: Option<u32>,
+    pub vnc_height: Option<u32>,
+    pub tpm: Option<bool>,
+}
+
 fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') {
         bail!("invalid VM name: {}", name);
@@ -277,6 +289,76 @@ fn vm_dataset(name: &str, config: &Config) -> Result<String> {
         config.zfs_pool,
         vm_dir(name, config)?.display()
     ))
+}
+
+pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -> Result<()> {
+    let has_options = options.cpus.is_some()
+        || options.memory.is_some()
+        || options.iso.is_some()
+        || options.remove_cd
+        || options.vnc_port.is_some()
+        || options.vnc_bind.is_some()
+        || options.vnc_width.is_some()
+        || options.vnc_height.is_some()
+        || options.tpm.is_some();
+    if !has_options {
+        bail!("set <vm> requires at least one option");
+    }
+    if options.remove_cd && options.iso.is_some() {
+        bail!("--remove-cd cannot be combined with --iso");
+    }
+    if options.cpus.is_some_and(|cpus| cpus == 0 || cpus > 256) {
+        bail!("VM CPU count must be between 1 and 256");
+    }
+    if options
+        .memory
+        .is_some_and(|memory| memory.trim().is_empty())
+    {
+        bail!("VM memory must not be empty");
+    }
+    if options.vnc_port == Some(0) || options.vnc_width == Some(0) || options.vnc_height == Some(0)
+    {
+        bail!("VNC port, width, and height must be greater than zero");
+    }
+    if options.vnc_bind.is_some_and(|bind| bind.trim().is_empty()) {
+        bail!("VNC bind address must not be empty");
+    }
+    let dir = vm_dir(name, config)?;
+    if !dir.is_dir() {
+        bail!("VM does not exist: {name}");
+    }
+    let dataset = vm_dataset(name, config)?;
+    if options.remove_cd && crate::metadata::get(&dataset, "iso")?.is_some() {
+        crate::metadata::unset(&dataset, "iso")?;
+    }
+    if let Some(cpus) = options.cpus {
+        crate::metadata::set(&dataset, "cpus", &cpus.to_string())?;
+    }
+    if let Some(memory) = options.memory {
+        crate::metadata::set(&dataset, "memory", memory.trim())?;
+    }
+    if let Some(iso) = options.iso {
+        let iso = Path::new(iso)
+            .canonicalize()
+            .with_context(|| format!("ISO does not exist: {iso}"))?;
+        crate::metadata::set(&dataset, "iso", &iso.display().to_string())?;
+    }
+    if let Some(port) = options.vnc_port {
+        crate::metadata::set(&dataset, "vnc_port", &port.to_string())?;
+    }
+    if let Some(bind) = options.vnc_bind {
+        crate::metadata::set(&dataset, "vnc_bind", bind.trim())?;
+    }
+    if let Some(width) = options.vnc_width {
+        crate::metadata::set(&dataset, "vnc_width", &width.to_string())?;
+    }
+    if let Some(height) = options.vnc_height {
+        crate::metadata::set(&dataset, "vnc_height", &height.to_string())?;
+    }
+    if let Some(tpm) = options.tpm {
+        crate::metadata::set(&dataset, "tpm", &tpm.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Result<()> {

@@ -21,6 +21,7 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "create",
     "destroy",
     "start",
+    "set",
     "stop",
     "attach",
     "version",
@@ -347,6 +348,24 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
                 args.push("--wait".to_string());
             }
         }
+        "set" => {
+            args.push(string_field(request, "name")?.to_string());
+            append_number_option(request, &mut args, "cpus", "--cpus")?;
+            append_string_option(request, &mut args, "memory", "--memory")?;
+            append_string_option(request, &mut args, "iso", "--iso")?;
+            if optional_bool(request, "remove_cd") == Some(true) {
+                args.push("--remove-cd".to_string());
+            }
+            append_number_option(request, &mut args, "vnc_port", "--vnc-port")?;
+            append_string_option(request, &mut args, "vnc_bind", "--vnc-bind")?;
+            append_number_option(request, &mut args, "vnc_width", "--vnc-width")?;
+            append_number_option(request, &mut args, "vnc_height", "--vnc-height")?;
+            match optional_bool(request, "tpm") {
+                Some(true) => args.push("--tpm".to_string()),
+                Some(false) => args.push("--no-tpm".to_string()),
+                None => {}
+            }
+        }
         "dependencies" => {
             args.push(string_field(request, "type")?.to_string());
             args.push(string_field(request, "name")?.to_string());
@@ -493,6 +512,7 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
                 )?;
             }
         }
+        "set" => encode_set(&mut request, &args[1..])?,
         "dependencies" => {
             require_arg(&args[1..], 0, "type")
                 .map(|value| add_string(&mut request, "type", value))?;
@@ -682,6 +702,55 @@ fn encode_create(request: &mut Nvtree, args: &[String]) -> Result<()> {
             add_bool(request, "attach", has_flag(args, "--attach"));
         }
         _ => bail!("unsupported create type: {resource}"),
+    }
+    Ok(())
+}
+
+fn encode_set(request: &mut Nvtree, args: &[String]) -> Result<()> {
+    add_string(request, "name", require_arg(args, 0, "VM name")?);
+    if args.len() == 1 {
+        bail!("set requires at least one option");
+    }
+    if has_flag(args, "--tpm") && has_flag(args, "--no-tpm") {
+        bail!("--tpm and --no-tpm are mutually exclusive");
+    }
+    if has_flag(args, "--remove-cd") && has_flag(args, "--iso") {
+        bail!("--remove-cd cannot be combined with --iso");
+    }
+    encode_optional_number(request, args, "--cpus", "cpus")?;
+    encode_optional_string(request, args, "--memory", "memory")?;
+    encode_optional_string(request, args, "--iso", "iso")?;
+    add_bool(request, "remove_cd", has_flag(args, "--remove-cd"));
+    encode_optional_number(request, args, "--vnc-port", "vnc_port")?;
+    encode_optional_string(request, args, "--vnc-bind", "vnc_bind")?;
+    encode_optional_number(request, args, "--vnc-width", "vnc_width")?;
+    encode_optional_number(request, args, "--vnc-height", "vnc_height")?;
+    if has_flag(args, "--tpm") || has_flag(args, "--no-tpm") {
+        add_bool(request, "tpm", has_flag(args, "--tpm"));
+    }
+    let value_options = [
+        "--cpus",
+        "--memory",
+        "--iso",
+        "--vnc-port",
+        "--vnc-bind",
+        "--vnc-width",
+        "--vnc-height",
+    ];
+    let flag_options = ["--tpm", "--no-tpm", "--remove-cd"];
+    let mut index = 1;
+    while index < args.len() {
+        let option = args[index].as_str();
+        if value_options.contains(&option) {
+            if args.get(index + 1).is_none() || args[index + 1].starts_with("--") {
+                bail!("{option} requires a value");
+            }
+            index += 2;
+        } else if flag_options.contains(&option) {
+            index += 1;
+        } else {
+            bail!("unexpected set argument: {option}");
+        }
     }
     Ok(())
 }

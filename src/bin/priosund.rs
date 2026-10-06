@@ -448,6 +448,12 @@ fn execute_jail_request(
             nvtree_find(request, "type").map(|pair| &pair.value),
             Some(Nvtvalue::String(value)) if value == "vm"
         ),
+        "set" => nvtree_find(request, "name")
+            .and_then(|pair| match &pair.value {
+                Nvtvalue::String(name) => Some(bhyve::path_exists(name, &config)),
+                _ => None,
+            })
+            .unwrap_or(false),
         "start" | "stop" => nvtree_find(request, "name")
             .and_then(|pair| match &pair.value {
                 Nvtvalue::String(name) => Some(bhyve::path_exists(name, &config)),
@@ -591,6 +597,35 @@ fn execute_jail_request(
                     }
                     jail::start(string_field(request, "name")?, &config)?;
                 }
+            }
+            "set" => {
+                let cpus = optional_number(request, "cpus")
+                    .map(|value| u32::try_from(value).context("cpus is out of range"))
+                    .transpose()?;
+                let vnc_port = optional_number(request, "vnc_port")
+                    .map(|value| u16::try_from(value).context("vnc_port is out of range"))
+                    .transpose()?;
+                let vnc_width = optional_number(request, "vnc_width")
+                    .map(|value| u32::try_from(value).context("vnc_width is out of range"))
+                    .transpose()?;
+                let vnc_height = optional_number(request, "vnc_height")
+                    .map(|value| u32::try_from(value).context("vnc_height is out of range"))
+                    .transpose()?;
+                bhyve::set_vm_options(
+                    string_field(request, "name")?,
+                    &bhyve::VmSetOptions {
+                        cpus,
+                        memory: optional_string(request, "memory"),
+                        iso: optional_string(request, "iso"),
+                        remove_cd: optional_bool(request, "remove_cd") == Some(true),
+                        vnc_port,
+                        vnc_bind: optional_string(request, "vnc_bind"),
+                        vnc_width,
+                        vnc_height,
+                        tpm: optional_bool(request, "tpm"),
+                    },
+                    &config,
+                )?;
             }
             "stop" => {
                 if is_vm {

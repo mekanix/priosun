@@ -193,6 +193,9 @@ and VMs also share the start and stop commands:
 priosun start windows
 priosun start windows --attach
 priosun stop windows
+priosun set windows --remove-cd
+priosun set windows --memory 16G --cpus 4 --vnc-port 5900
+priosun set windows --iso "/var/vm/Windows 11.iso"
 priosun destroy vm windows
 priosun destroy base jail 15.1
 priosun attach myjail
@@ -212,8 +215,13 @@ priosun list vms
 priosun list all
 ```
 
-The supported commands are `create`, `destroy`, `start`, `stop`, `attach`, `up`,
-`down`, `enable`, `disable`, `dependencies`, `network-init`, `version`, and `list`.
+`priosun set <name>` updates VM options such as CPU count, memory, ISO path, VNC
+settings, and TPM state. `priosun set <name> --remove-cd` clears the configured
+ISO so the VM boots from its disk on its next start and later starts.
+
+The supported commands are `create`, `destroy`, `start`, `set`, `stop`,
+`attach`, `up`, `down`, `enable`, `disable`, `dependencies`, `network-init`,
+`version`, and `list`.
 
 The `network-init` command configures the bridge in `/etc/rc.conf` and activates
 it immediately, then creates the managed `network` jail when necessary, installs Kea

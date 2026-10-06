@@ -13,6 +13,12 @@ pub fn set(dataset: &str, name: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn unset(dataset: &str, name: &str) -> Result<()> {
+    let property = property(name);
+    crate::util::cmd::run("zfs", &["inherit", &property, dataset])?;
+    Ok(())
+}
+
 pub fn get(dataset: &str, name: &str) -> Result<Option<String>> {
     let property = property(name);
     let output = Command::new("zfs")
