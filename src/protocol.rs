@@ -343,6 +343,9 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
             if command == "start" && optional_bool(request, "attach") == Some(true) {
                 args.push("--attach".to_string());
             }
+            if command == "start" && optional_bool(request, "wait") == Some(true) {
+                args.push("--wait".to_string());
+            }
         }
         "dependencies" => {
             args.push(string_field(request, "type")?.to_string());
@@ -479,10 +482,11 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
                 .map(|value| add_string(&mut request, "name", value))?;
             if command == "start" {
                 add_bool(&mut request, "attach", has_flag(&args[1..], "--attach"));
+                add_bool(&mut request, "wait", has_flag(&args[1..], "--wait"));
                 ensure_no_extra(
                     &args[1..]
                         .iter()
-                        .filter(|arg| arg.as_str() != "--attach")
+                        .filter(|arg| arg.as_str() != "--attach" && arg.as_str() != "--wait")
                         .cloned()
                         .collect::<Vec<_>>(),
                     1,

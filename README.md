@@ -66,8 +66,8 @@ priosun create base jail --version 15.1 15.1 --set FreeBSD-set-base-jail
 priosun create jail --version 15.1 myjail --base 15.1
 priosun create vm windows \
   --disk 32G \
-  --os freebsd \
-  --iso /var/vm/Windows.iso \
+  --os windows \
+  --iso "/var/vm/Windows 11.iso" \
   --cpus 8 \
   --memory 32G \
   --vnc-port 5900 \
@@ -144,7 +144,7 @@ starting the resource; a failed provisioning run leaves it `false` so the next
 The optional `--version MAJOR.MINOR` selects the PkgBase release and records
 the matching release metadata for the jail, such as `15.0` or `15.1`.
 
-VM creation requires `--os`; `freebsd`, `ubuntu`, `fedora`, and `debian` are supported. VMs may
+VM creation requires `--os`; `freebsd`, `ubuntu`, `fedora`, `debian`, and `windows` are supported. Windows VMs require `--iso` and cannot use cloud-init. VMs may
 enable cloud-init with the flag `--cloud-init`. The selected OS determines the
 cloud image format and import process. Both currently get a per-VM FAT32
 `cidata` volume under `/var/priosun/seed`, attached as an additional NVMe

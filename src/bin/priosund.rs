@@ -580,8 +580,15 @@ fn execute_jail_request(
             }
             "start" => {
                 if is_vm {
-                    bhyve::start(string_field(request, "name")?, &config)?;
+                    bhyve::start_with_wait(
+                        string_field(request, "name")?,
+                        &config,
+                        optional_bool(request, "wait") == Some(true),
+                    )?;
                 } else {
+                    if optional_bool(request, "wait") == Some(true) {
+                        bail!("start --wait is only supported for VMs");
+                    }
                     jail::start(string_field(request, "name")?, &config)?;
                 }
             }

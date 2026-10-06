@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::os::fd::FromRawFd;
+use std::os::unix::fs::FileTypeExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -51,7 +53,7 @@ pub struct VmConfig {
 }
 
 fn validate_os(os: &str) -> Result<()> {
-    if os != "freebsd" && os != "ubuntu" && os != "fedora" && os != "debian" {
+    if os != "freebsd" && os != "ubuntu" && os != "fedora" && os != "debian" && os != "windows" {
         bail!("unsupported VM operating system: {os}");
     }
     Ok(())
@@ -279,6 +281,9 @@ fn vm_dataset(name: &str, config: &Config) -> Result<String> {
 
 pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Result<()> {
     validate_os(options.os)?;
+    if options.os == "windows" && (options.cloud_init || options.iso.is_none()) {
+        bail!("Windows VMs require an installation ISO and cannot use cloud-init");
+    }
     let image_version = if options.cloud_init {
         Some(cloud_image_version(options.os, options.version)?)
     } else {
@@ -331,7 +336,8 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
     crate::metadata::set(&dataset, "vnc_bind", options.vnc_bind.trim())?;
     crate::metadata::set(&dataset, "vnc_width", &options.vnc_width.to_string())?;
     crate::metadata::set(&dataset, "vnc_height", &options.vnc_height.to_string())?;
-    crate::metadata::set(&dataset, "tpm", &options.tpm.to_string())?;
+    let tpm = options.tpm || options.os == "windows";
+    crate::metadata::set(&dataset, "tpm", &tpm.to_string())?;
     crate::metadata::set(&dataset, "cpus", &options.cpus.to_string())?;
     crate::metadata::set(&dataset, "memory", options.memory.trim())?;
     crate::metadata::set(&dataset, "dependencies", "")?;
@@ -715,12 +721,50 @@ pub fn serial_console(name: &str, config: &Config) -> Result<fs::File> {
     result
 }
 
-fn tpm_socket_path(name: &str) -> Result<(String, String)> {
+fn tpm_socket_path(name: &str, config: &Config) -> Result<(String, String)> {
     validate_name(name)?;
     let tpm_dir = Path::new("/var/run/swtpm");
+    fs::create_dir_all(tpm_dir).context("failed to create swtpm state directory")?;
     let socket = tpm_dir.join(name);
     if socket.exists() {
-        bail!("TPM socket already exists: {}", socket.display());
+        let pid_path = tpm_pid_path(name, config)?;
+        let stale = match fs::read_to_string(&pid_path) {
+            Ok(pid_text) => {
+                let pid: libc::pid_t = pid_text
+                    .trim()
+                    .parse()
+                    .with_context(|| format!("invalid swtpm PID in {}", pid_path.display()))?;
+                if unsafe { libc::kill(pid, 0) } == 0 {
+                    bail!("TPM socket is still active: {}", socket.display());
+                }
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(error).with_context(|| format!("check swtpm process {pid}"));
+                }
+                true
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !fs::symlink_metadata(&socket)?.file_type().is_socket() {
+                    bail!("TPM path exists but is not a socket: {}", socket.display());
+                }
+                match UnixStream::connect(&socket) {
+                    Ok(_) => bail!("TPM socket is still active: {}", socket.display()),
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ConnectionRefused
+                            || error.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        true
+                    }
+                    Err(error) => return Err(error).context("check existing TPM socket"),
+                }
+            }
+            Err(error) => return Err(error).context("read swtpm PID"),
+        };
+        if stale {
+            fs::remove_file(&socket)
+                .with_context(|| format!("remove stale TPM socket {}", socket.display()))?;
+            let _ = fs::remove_file(pid_path);
+        }
     }
     Ok((tpm_dir.display().to_string(), socket.display().to_string()))
 }
@@ -741,11 +785,15 @@ fn destroy_tap(tap: &str, bridge: &str) {
 }
 
 pub fn start(name: &str, config: &Config) -> Result<()> {
-    start_with_stack(name, config, &mut HashSet::new())
+    start_with_wait(name, config, false)
+}
+
+pub fn start_with_wait(name: &str, config: &Config, wait_for_vnc: bool) -> Result<()> {
+    start_with_stack_mode(name, config, &mut HashSet::new(), false, wait_for_vnc)
 }
 
 pub fn start_with_seed(name: &str, config: &Config) -> Result<()> {
-    start_with_stack_mode(name, config, &mut HashSet::new(), true)
+    start_with_stack_mode(name, config, &mut HashSet::new(), true, false)
 }
 
 pub(crate) fn start_with_stack(
@@ -753,7 +801,7 @@ pub(crate) fn start_with_stack(
     config: &Config,
     stack: &mut HashSet<String>,
 ) -> Result<()> {
-    start_with_stack_mode(name, config, stack, false)
+    start_with_stack_mode(name, config, stack, false, false)
 }
 
 fn start_with_stack_mode(
@@ -761,6 +809,7 @@ fn start_with_stack_mode(
     config: &Config,
     stack: &mut HashSet<String>,
     use_seed: bool,
+    wait_for_vnc: bool,
 ) -> Result<()> {
     if is_running(name, config) {
         return Ok(());
@@ -778,21 +827,21 @@ fn start_with_stack_mode(
             bail!("dependency does not exist: {dependency}");
         }
     }
-    let result = start_inner(name, config, use_seed);
+    let result = start_inner(name, config, use_seed, wait_for_vnc);
     stack.remove(name);
     result
 }
 
-fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
+fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) -> Result<()> {
     let vm = read_config(name, config)?;
     validate_os(&vm.os)?;
     if is_running(name, config) {
         bail!("VM is already running: {}", name);
     }
     let (tpm_socket, mut tpm_child) = if vm.tpm {
-        let (tpm_dir, actual) = tpm_socket_path(name)?;
+        let (tpm_dir, actual) = tpm_socket_path(name, config)?;
         let command = format!(
-            "swtpm socket --tpmstate dir={} --tpm2 --ctrl type=unixio,path={}",
+            "swtpm socket --tpmstate dir={} --tpm2 --server type=unixio,path={}",
             tpm_dir, actual
         );
         let child = Command::new("/bin/sh")
@@ -806,6 +855,7 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
     } else {
         (None, None)
     };
+    let tpm_socket_path = tpm_socket.clone();
 
     let tap = match configure_tap(&config.bridge) {
         Ok(tap) => tap,
@@ -813,6 +863,9 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
             if let Some(mut child) = tpm_child.take() {
                 let _ = child.kill();
                 let _ = child.wait();
+            }
+            if let Some(socket) = tpm_socket_path.as_ref() {
+                let _ = fs::remove_file(socket);
             }
             return Err(error);
         }
@@ -823,6 +876,9 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
         if let Some(mut child) = tpm_child.take() {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        if let Some(socket) = tpm_socket_path.as_ref() {
+            let _ = fs::remove_file(socket);
         }
         return Err(error.into());
     }
@@ -837,6 +893,11 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
         )?;
         mac
     };
+    let network_device = if vm.os == "windows" {
+        "e1000"
+    } else {
+        "virtio-net"
+    };
     let mut args = vec![
         "-c".to_string(),
         vm.cpus.to_string(),
@@ -845,16 +906,23 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
         "-A".to_string(),
         "-H".to_string(),
         "-P".to_string(),
+    ];
+    if vm.os == "windows" {
+        args.push("-w".to_string());
+    }
+    args.extend([
         "-s".to_string(),
         "0,hostbridge".to_string(),
         "-s".to_string(),
         format!("3,nvme,{}", vm.disk.display()),
         "-s".to_string(),
-        format!("2,virtio-net,{},mac={mac}", tap),
+        format!("2,{network_device},{},mac={mac}", tap),
         "-s".to_string(),
         "31,lpc".to_string(),
-    ];
-    args.extend(["-l".to_string(), "com1,stdio".to_string()]);
+    ]);
+    if vm.os != "windows" {
+        args.extend(["-l".to_string(), "com1,stdio".to_string()]);
+    }
     if use_seed && vm.iso.is_some() {
         bail!("VM cannot use both cloud-init and an installation ISO");
     }
@@ -870,13 +938,24 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
         args.extend([
             "-s".to_string(),
             format!(
-                "29,fbuf,tcp={}:{},w={},h={}",
-                vm.vnc_bind, port, vm.vnc_width, vm.vnc_height
+                "29,fbuf,tcp={}:{},w={},h={}{}",
+                vm.vnc_bind,
+                port,
+                vm.vnc_width,
+                vm.vnc_height,
+                if wait_for_vnc { ",wait" } else { "" }
             ),
         ]);
     }
-    if let Some(socket) = tpm_socket {
-        args.extend(["-s".to_string(), format!("31,lpc,tpm,path={}", socket)]);
+    if let Some(socket) = tpm_socket.as_ref() {
+        args.extend([
+            "-o".to_string(),
+            "tpm.type=swtpm".to_string(),
+            "-o".to_string(),
+            format!("tpm.path={socket}"),
+            "-o".to_string(),
+            "tpm.version=2.0".to_string(),
+        ]);
     }
     if config.vm_firmware.exists() {
         args.extend([
@@ -905,6 +984,9 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
                 let _ = tpm.kill();
                 let _ = tpm.wait();
             }
+            if let Some(socket) = tpm_socket_path.as_ref() {
+                let _ = fs::remove_file(socket);
+            }
             remove_serial_console(name);
             return Err(error)
                 .context("failed to start bhyve; is bhyve installed and virtualization enabled?");
@@ -920,6 +1002,7 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
     let vm_name = vm.name.clone();
     let vm_config = config.clone();
     let cleanup_seed = use_seed;
+    let cleanup_tpm_socket = tpm_socket_path;
     std::thread::spawn(move || {
         let mut child = child;
         let _ = child.wait();
@@ -928,6 +1011,9 @@ fn start_inner(name: &str, config: &Config, use_seed: bool) -> Result<()> {
         if let Some(mut tpm) = tpm_child {
             let _ = tpm.kill();
             let _ = tpm.wait();
+        }
+        if let Some(socket) = cleanup_tpm_socket {
+            let _ = fs::remove_file(socket);
         }
         destroy_tap(&tap, &bridge);
         let _ = fs::remove_file(bhyve_pid);

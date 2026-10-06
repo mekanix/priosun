@@ -29,6 +29,8 @@ enum Commands {
         name: String,
         #[arg(long)]
         attach: bool,
+        #[arg(long)]
+        wait: bool,
     },
     Stop {
         name: String,
@@ -393,14 +395,17 @@ fn main() -> Result<()> {
         Commands::Destroy { resource: None } => {
             bail!("destroy requires a resource or an initialized service directory");
         }
-        Commands::Start { name, attach } => {
+        Commands::Start { name, attach, wait } => {
             if attach {
                 bail!("start --attach is handled by priosund");
             }
             let config = config::Config::load()?;
             if bhyve::path_exists(&name, &config) {
-                bhyve::start(&name, &config)?;
+                bhyve::start_with_wait(&name, &config, wait)?;
             } else if jail::path_exists(&name, &config) {
+                if wait {
+                    bail!("start --wait is only supported for VMs");
+                }
                 jail::start(&name, &config)?;
             } else {
                 bail!("no VM or jail exists with this name: {}", name);
