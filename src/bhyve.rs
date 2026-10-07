@@ -406,7 +406,7 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
         .transpose()?;
     let vm_dataset_path = format!("{}{}", config.zfs_pool, dir.display());
     cmd::run("zfs", &["create", "-p", &vm_dataset_path])?;
-    cmd::run("zfs", &["create", "-V", options.disk, &disk_dataset])?;
+    cmd::run("zfs", &["create", "-s", "-V", options.disk, &disk_dataset])?;
     let dataset = vm_dataset(name, config)?;
     crate::metadata::set(&dataset, "os", options.os)?;
     if let Some(iso) = iso_path.as_ref() {
@@ -464,7 +464,7 @@ fn create_seed(
     let dataset = seed_dataset(name, config)?;
     let device = seed_path(name, config)?;
     let mountpoint = vm_dir(name, config)?.join("seed");
-    cmd::run("zfs", &["create", "-V", "256M", &dataset])?;
+    cmd::run("zfs", &["create", "-s", "-V", "256M", &dataset])?;
     cmd::run(
         "newfs_msdos",
         &[

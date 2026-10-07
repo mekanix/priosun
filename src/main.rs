@@ -283,7 +283,7 @@ fn main() -> Result<()> {
                 let config = config::Config::load()?;
                 let volume = zfs_name(&config.zfs_pool, &name);
                 let (_, transcript) = util::cmd::capture(|| {
-                    util::cmd::run("zfs", &["create", "-p", "-V", &size, &volume]).map(|_| ())
+                    util::cmd::run("zfs", &["create", "-p", "-s", "-V", &size, &volume]).map(|_| ())
                 })?;
                 print_transcript(&transcript)?;
             }
