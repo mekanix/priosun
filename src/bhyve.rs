@@ -45,6 +45,7 @@ pub struct VmConfig {
     pub vnc_width: u32,
     pub vnc_height: u32,
     pub tpm: bool,
+    pub passthru: Vec<String>,
     pub cpus: u32,
     pub memory: String,
     pub dependencies: Vec<String>,
@@ -228,6 +229,8 @@ pub struct VmSetOptions<'a> {
     pub vnc_width: Option<u32>,
     pub vnc_height: Option<u32>,
     pub tpm: Option<bool>,
+    pub add_passthru: Option<&'a str>,
+    pub remove_passtru: Option<&'a str>,
 }
 
 fn validate_name(name: &str) -> Result<()> {
@@ -280,6 +283,12 @@ fn read_config(name: &str, config: &Config) -> Result<VmConfig> {
         interface_macs: optional(&interface_mac_property(VIRTIO_NET_INTERFACE))?
             .map(|mac| HashMap::from([(VIRTIO_NET_INTERFACE.to_string(), mac)]))
             .unwrap_or_default(),
+        passthru: optional("passthru")?
+            .unwrap_or_default()
+            .split(',')
+            .filter(|pci_id| !pci_id.is_empty())
+            .map(str::to_string)
+            .collect(),
     })
 }
 
@@ -301,11 +310,23 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
         || options.vnc_width.is_some()
         || options.vnc_height.is_some()
         || options.tpm.is_some();
+    let has_options =
+        has_options || options.add_passthru.is_some() || options.remove_passtru.is_some();
     if !has_options {
         bail!("set <vm> requires at least one option");
     }
     if options.remove_cd && options.iso.is_some() {
         bail!("--remove-cd cannot be combined with --iso");
+    }
+    if options.add_passthru.is_some() && options.remove_passtru.is_some() {
+        bail!("--add-passthru and --remove-passtru cannot be combined");
+    }
+    if options
+        .add_passthru
+        .or(options.remove_passtru)
+        .is_some_and(|pci_id| !valid_pci_id(pci_id))
+    {
+        bail!("invalid PCI ID; expected a bus/slot/function address such as 4/0/0");
     }
     if options.cpus.is_some_and(|cpus| cpus == 0 || cpus > 256) {
         bail!("VM CPU count must be between 1 and 256");
@@ -358,7 +379,45 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
     if let Some(tpm) = options.tpm {
         crate::metadata::set(&dataset, "tpm", &tpm.to_string())?;
     }
+    if let Some(pci_id) = options.add_passthru {
+        let mut devices = crate::metadata::get(&dataset, "passthru")?
+            .unwrap_or_default()
+            .split(',')
+            .filter(|device| !device.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if devices.iter().any(|device| device == pci_id) {
+            bail!("PCI device is already configured for passthrough: {pci_id}");
+        }
+        devices.push(pci_id.to_string());
+        crate::metadata::set(&dataset, "passthru", &devices.join(","))?;
+    }
+    if let Some(pci_id) = options.remove_passtru {
+        let mut devices = crate::metadata::get(&dataset, "passthru")?
+            .unwrap_or_default()
+            .split(',')
+            .filter(|device| !device.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let Some(index) = devices.iter().position(|device| device == pci_id) else {
+            bail!("PCI device is not configured for passthrough: {pci_id}");
+        };
+        devices.remove(index);
+        if devices.is_empty() {
+            crate::metadata::unset(&dataset, "passthru")?;
+        } else {
+            crate::metadata::set(&dataset, "passthru", &devices.join(","))?;
+        }
+    }
     Ok(())
+}
+
+fn valid_pci_id(pci_id: &str) -> bool {
+    let parts = pci_id.split('/').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.chars().all(|character| character.is_ascii_hexdigit())
+        })
 }
 
 pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Result<()> {
@@ -989,6 +1048,9 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
         "-H".to_string(),
         "-P".to_string(),
     ];
+    if !vm.passthru.is_empty() {
+        args.push("-S".to_string());
+    }
     if vm.os == "windows" {
         args.push("-w".to_string());
     }
@@ -1002,6 +1064,12 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
         "-s".to_string(),
         "31,lpc".to_string(),
     ]);
+    for (index, pci_id) in vm.passthru.iter().enumerate() {
+        args.extend([
+            "-s".to_string(),
+            format!("{}:0,passthru,{pci_id}", 6 + index),
+        ]);
+    }
     if vm.os != "windows" {
         args.extend(["-l".to_string(), "com1,stdio".to_string()]);
     }

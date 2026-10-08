@@ -623,6 +623,8 @@ fn execute_jail_request(
                         vnc_width,
                         vnc_height,
                         tpm: optional_bool(request, "tpm"),
+                        add_passthru: optional_string(request, "add_passthru"),
+                        remove_passtru: optional_string(request, "remove_passtru"),
                     },
                     &config,
                 )?;

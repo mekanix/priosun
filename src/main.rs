@@ -54,6 +54,10 @@ enum Commands {
         tpm: bool,
         #[arg(long)]
         no_tpm: bool,
+        #[arg(long, conflicts_with = "remove_passtru")]
+        add_passthru: Option<String>,
+        #[arg(long)]
+        remove_passtru: Option<String>,
     },
     Stop {
         name: String,
@@ -446,6 +450,8 @@ fn main() -> Result<()> {
             vnc_height,
             tpm,
             no_tpm,
+            add_passthru,
+            remove_passtru,
         } => {
             let config = config::Config::load()?;
             bhyve::set_vm_options(
@@ -466,6 +472,8 @@ fn main() -> Result<()> {
                     } else {
                         None
                     },
+                    add_passthru: add_passthru.as_deref(),
+                    remove_passtru: remove_passtru.as_deref(),
                 },
                 &config,
             )?;

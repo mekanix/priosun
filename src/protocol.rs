@@ -360,6 +360,8 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
             append_string_option(request, &mut args, "vnc_bind", "--vnc-bind")?;
             append_number_option(request, &mut args, "vnc_width", "--vnc-width")?;
             append_number_option(request, &mut args, "vnc_height", "--vnc-height")?;
+            append_string_option(request, &mut args, "add_passthru", "--add-passthru")?;
+            append_string_option(request, &mut args, "remove_passtru", "--remove-passtru")?;
             match optional_bool(request, "tpm") {
                 Some(true) => args.push("--tpm".to_string()),
                 Some(false) => args.push("--no-tpm".to_string()),
@@ -725,6 +727,8 @@ fn encode_set(request: &mut Nvtree, args: &[String]) -> Result<()> {
     encode_optional_string(request, args, "--vnc-bind", "vnc_bind")?;
     encode_optional_number(request, args, "--vnc-width", "vnc_width")?;
     encode_optional_number(request, args, "--vnc-height", "vnc_height")?;
+    encode_optional_string(request, args, "--add-passthru", "add_passthru")?;
+    encode_optional_string(request, args, "--remove-passtru", "remove_passtru")?;
     if has_flag(args, "--tpm") || has_flag(args, "--no-tpm") {
         add_bool(request, "tpm", has_flag(args, "--tpm"));
     }
@@ -736,6 +740,8 @@ fn encode_set(request: &mut Nvtree, args: &[String]) -> Result<()> {
         "--vnc-bind",
         "--vnc-width",
         "--vnc-height",
+        "--add-passthru",
+        "--remove-passtru",
     ];
     let flag_options = ["--tpm", "--no-tpm", "--remove-cd"];
     let mut index = 1;
