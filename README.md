@@ -195,6 +195,8 @@ priosun start windows --attach
 priosun stop windows
 priosun set windows --remove-cd
 priosun set windows --memory 16G --cpus 4 --vnc-port 5900
+priosun set windows --sound
+priosun set windows --sound --dsp /dev/dsp5
 priosun set windows --iso "/var/vm/Windows 11.iso"
 priosun destroy vm windows
 priosun destroy base jail 15.1

@@ -54,6 +54,12 @@ enum Commands {
         tpm: bool,
         #[arg(long)]
         no_tpm: bool,
+        #[arg(long, conflicts_with = "no_sound")]
+        sound: bool,
+        #[arg(long)]
+        no_sound: bool,
+        #[arg(long)]
+        dsp: Option<String>,
         #[arg(long, conflicts_with = "remove_passtru")]
         add_passthru: Option<String>,
         #[arg(long)]
@@ -450,6 +456,9 @@ fn main() -> Result<()> {
             vnc_height,
             tpm,
             no_tpm,
+            sound,
+            no_sound,
+            dsp,
             add_passthru,
             remove_passtru,
         } => {
@@ -472,6 +481,14 @@ fn main() -> Result<()> {
                     } else {
                         None
                     },
+                    sound: if sound {
+                        Some(true)
+                    } else if no_sound {
+                        Some(false)
+                    } else {
+                        None
+                    },
+                    dsp: dsp.as_deref(),
                     add_passthru: add_passthru.as_deref(),
                     remove_passtru: remove_passtru.as_deref(),
                 },

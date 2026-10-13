@@ -45,6 +45,8 @@ pub struct VmConfig {
     pub vnc_width: u32,
     pub vnc_height: u32,
     pub tpm: bool,
+    pub sound: bool,
+    pub dsp: String,
     pub passthru: Vec<String>,
     pub cpus: u32,
     pub memory: String,
@@ -229,6 +231,8 @@ pub struct VmSetOptions<'a> {
     pub vnc_width: Option<u32>,
     pub vnc_height: Option<u32>,
     pub tpm: Option<bool>,
+    pub sound: Option<bool>,
+    pub dsp: Option<&'a str>,
     pub add_passthru: Option<&'a str>,
     pub remove_passtru: Option<&'a str>,
 }
@@ -271,6 +275,8 @@ fn read_config(name: &str, config: &Config) -> Result<VmConfig> {
         vnc_width: value("vnc_width")?.parse()?,
         vnc_height: value("vnc_height")?.parse()?,
         tpm: crate::metadata::get_bool(&dataset, "tpm", false)?,
+        sound: crate::metadata::get_bool(&dataset, "sound", false)?,
+        dsp: optional("dsp")?.unwrap_or_else(|| "/dev/dsp".to_string()),
         cpus: value("cpus")?.parse()?,
         memory: value("memory")?,
         dependencies: optional("dependencies")?
@@ -310,8 +316,11 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
         || options.vnc_width.is_some()
         || options.vnc_height.is_some()
         || options.tpm.is_some();
-    let has_options =
-        has_options || options.add_passthru.is_some() || options.remove_passtru.is_some();
+    let has_options = has_options
+        || options.sound.is_some()
+        || options.dsp.is_some()
+        || options.add_passthru.is_some()
+        || options.remove_passtru.is_some();
     if !has_options {
         bail!("set <vm> requires at least one option");
     }
@@ -343,6 +352,9 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
     }
     if options.vnc_bind.is_some_and(|bind| bind.trim().is_empty()) {
         bail!("VNC bind address must not be empty");
+    }
+    if options.dsp.is_some_and(|dsp| dsp.trim().is_empty()) {
+        bail!("DSP device path must not be empty");
     }
     let dir = vm_dir(name, config)?;
     if !dir.is_dir() {
@@ -378,6 +390,12 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
     }
     if let Some(tpm) = options.tpm {
         crate::metadata::set(&dataset, "tpm", &tpm.to_string())?;
+    }
+    if let Some(sound) = options.sound {
+        crate::metadata::set(&dataset, "sound", &sound.to_string())?;
+    }
+    if let Some(dsp) = options.dsp {
+        crate::metadata::set(&dataset, "dsp", dsp.trim())?;
     }
     if let Some(pci_id) = options.add_passthru {
         let mut devices = crate::metadata::get(&dataset, "passthru")?
@@ -1087,6 +1105,8 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
     if let Some(port) = vm.vnc_port {
         args.extend([
             "-s".to_string(),
+            "30,xhci,tablet".to_string(),
+            "-s".to_string(),
             format!(
                 "29,fbuf,tcp={}:{},w={},h={}{}",
                 vm.vnc_bind,
@@ -1095,6 +1115,12 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
                 vm.vnc_height,
                 if wait_for_vnc { ",wait" } else { "" }
             ),
+        ]);
+    }
+    if vm.sound {
+        args.extend([
+            "-s".to_string(),
+            format!("5,hda,play={},rec={}", vm.dsp, vm.dsp),
         ]);
     }
     if let Some(socket) = tpm_socket.as_ref() {

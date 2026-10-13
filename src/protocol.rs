@@ -362,9 +362,15 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
             append_number_option(request, &mut args, "vnc_height", "--vnc-height")?;
             append_string_option(request, &mut args, "add_passthru", "--add-passthru")?;
             append_string_option(request, &mut args, "remove_passtru", "--remove-passtru")?;
+            append_string_option(request, &mut args, "dsp", "--dsp")?;
             match optional_bool(request, "tpm") {
                 Some(true) => args.push("--tpm".to_string()),
                 Some(false) => args.push("--no-tpm".to_string()),
+                None => {}
+            }
+            match optional_bool(request, "sound") {
+                Some(true) => args.push("--sound".to_string()),
+                Some(false) => args.push("--no-sound".to_string()),
                 None => {}
             }
         }
@@ -716,6 +722,9 @@ fn encode_set(request: &mut Nvtree, args: &[String]) -> Result<()> {
     if has_flag(args, "--tpm") && has_flag(args, "--no-tpm") {
         bail!("--tpm and --no-tpm are mutually exclusive");
     }
+    if has_flag(args, "--sound") && has_flag(args, "--no-sound") {
+        bail!("--sound and --no-sound are mutually exclusive");
+    }
     if has_flag(args, "--remove-cd") && has_flag(args, "--iso") {
         bail!("--remove-cd cannot be combined with --iso");
     }
@@ -729,8 +738,12 @@ fn encode_set(request: &mut Nvtree, args: &[String]) -> Result<()> {
     encode_optional_number(request, args, "--vnc-height", "vnc_height")?;
     encode_optional_string(request, args, "--add-passthru", "add_passthru")?;
     encode_optional_string(request, args, "--remove-passtru", "remove_passtru")?;
+    encode_optional_string(request, args, "--dsp", "dsp")?;
     if has_flag(args, "--tpm") || has_flag(args, "--no-tpm") {
         add_bool(request, "tpm", has_flag(args, "--tpm"));
+    }
+    if has_flag(args, "--sound") || has_flag(args, "--no-sound") {
+        add_bool(request, "sound", has_flag(args, "--sound"));
     }
     let value_options = [
         "--cpus",
@@ -742,8 +755,9 @@ fn encode_set(request: &mut Nvtree, args: &[String]) -> Result<()> {
         "--vnc-height",
         "--add-passthru",
         "--remove-passtru",
+        "--dsp",
     ];
-    let flag_options = ["--tpm", "--no-tpm", "--remove-cd"];
+    let flag_options = ["--tpm", "--no-tpm", "--remove-cd", "--sound", "--no-sound"];
     let mut index = 1;
     while index < args.len() {
         let option = args[index].as_str();
