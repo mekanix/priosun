@@ -165,6 +165,8 @@ enum CreateResource {
         os: String,
         #[arg(long)]
         version: Option<String>,
+        #[arg(long, requires = "cloud_init")]
+        arch: Option<String>,
         #[arg(long, conflicts_with = "iso")]
         cloud_init: bool,
         #[arg(long, conflicts_with = "cloud_init")]
@@ -358,6 +360,7 @@ fn main() -> Result<()> {
                 disk,
                 os,
                 version,
+                arch,
                 cloud_init,
                 ssh_key,
                 iso,
@@ -377,6 +380,7 @@ fn main() -> Result<()> {
                         disk: &disk,
                         os: &os,
                         version: version.as_deref(),
+                        arch: arch.as_deref(),
                         cloud_init,
                         ssh_key: ssh_key.as_deref(),
                         iso: iso.as_deref(),

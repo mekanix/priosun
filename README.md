@@ -80,6 +80,15 @@ priosun create vm freebsd15 \
   --version 15.1 \
   --cloud-init
 
+# Select a different FreeBSD VM image architecture on an amd64 host
+priosun create vm freebsd144-i386 \
+  --disk 32G \
+  --memory 4G \
+  --os freebsd \
+  --version 14.4 \
+  --arch i386 \
+  --cloud-init
+
 priosun create vm ubuntu24 \
   --disk 32G \
   --memory 4G \

@@ -131,9 +131,13 @@ fn debian_release(version: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-fn cloud_image_arch(os: &str) -> Result<String> {
-    let output = cmd::run("uname", &["-m"])?;
-    let host_arch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+fn cloud_image_arch(os: &str, requested_arch: Option<&str>) -> Result<String> {
+    let host_arch = if let Some(arch) = requested_arch {
+        arch.to_string()
+    } else {
+        let output = cmd::run("uname", &["-m"])?;
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
     let arch = if os == "ubuntu" || os == "fedora" || os == "debian" {
         match (os, host_arch.as_str()) {
             ("ubuntu", "amd64" | "x86_64") => "amd64".to_string(),
@@ -144,6 +148,15 @@ fn cloud_image_arch(os: &str) -> Result<String> {
             ("debian", "arm64" | "aarch64") => "arm64".to_string(),
             _ => bail!("unsupported {os} host architecture: {host_arch}"),
         }
+    } else if os == "freebsd" {
+        match host_arch.as_str() {
+            "amd64" | "x86_64" => "amd64".to_string(),
+            "i386" | "i686" => "i386".to_string(),
+            "aarch64" | "arm64" => "aarch64".to_string(),
+            "armv7" => "armv7".to_string(),
+            "powerpc" | "powerpc64" | "riscv64" => host_arch,
+            _ => bail!("unsupported FreeBSD VM architecture: {host_arch}"),
+        }
     } else {
         host_arch
     };
@@ -153,8 +166,13 @@ fn cloud_image_arch(os: &str) -> Result<String> {
     Ok(arch)
 }
 
-fn provision_cloud_image(os: &str, version: &str, disk: &Path) -> Result<()> {
-    let arch = cloud_image_arch(os)?;
+fn provision_cloud_image(
+    os: &str,
+    version: &str,
+    requested_arch: Option<&str>,
+    disk: &Path,
+) -> Result<()> {
+    let arch = cloud_image_arch(os, requested_arch)?;
     let (filename, url) = if os == "ubuntu" {
         let codename = ubuntu_codename(version)
             .ok_or_else(|| anyhow::anyhow!("unsupported Ubuntu release version: {version}"))?;
@@ -207,6 +225,7 @@ pub struct VmCreateOptions<'a> {
     pub disk: &'a str,
     pub os: &'a str,
     pub version: Option<&'a str>,
+    pub arch: Option<&'a str>,
     pub cloud_init: bool,
     pub ssh_key: Option<&'a str>,
     pub iso: Option<&'a str>,
@@ -509,7 +528,7 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
     )?;
     if let Some(version) = image_version.as_deref() {
         if options.cloud_init {
-            provision_cloud_image(options.os, version, &disk_path)?;
+            provision_cloud_image(options.os, version, options.arch, &disk_path)?;
         }
     }
     if options.cloud_init {

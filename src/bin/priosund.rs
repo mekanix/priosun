@@ -679,6 +679,7 @@ fn create_vm(request: &nvtree::Nvtree, name: &str, config: &Config) -> Result<()
             disk: string_field(request, "disk")?,
             os: string_field(request, "os")?,
             version: optional_string(request, "version"),
+            arch: optional_string(request, "arch"),
             cloud_init: bool_field(request, "cloud_init")?,
             ssh_key: optional_string(request, "ssh_key"),
             iso: optional_string(request, "iso"),

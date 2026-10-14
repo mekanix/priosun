@@ -308,6 +308,7 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
                         string_field(request, "os")?.to_string(),
                     ]);
                     append_string_option(request, &mut args, "version", "--version")?;
+                    append_string_option(request, &mut args, "arch", "--arch")?;
                     if bool_field(request, "cloud_init")? {
                         args.push("--cloud-init".to_string());
                     }
@@ -684,10 +685,16 @@ fn encode_create(request: &mut Nvtree, args: &[String]) -> Result<()> {
             {
                 bail!("--cloud-init and --iso are mutually exclusive");
             }
+            if args.iter().any(|arg| arg == "--arch")
+                && !args.iter().any(|arg| arg == "--cloud-init")
+            {
+                bail!("--arch requires --cloud-init");
+            }
             add_string(request, "name", require_arg(args, 1, "name")?);
             add_string(request, "disk", named_option(args, "--disk")?);
             add_string(request, "os", named_option(args, "--os")?);
             encode_optional_string(request, args, "--version", "version")?;
+            encode_optional_string(request, args, "--arch", "arch")?;
             add_bool(request, "cloud_init", has_flag(args, "--cloud-init"));
             if args.iter().any(|arg| arg == "--ssh-key")
                 && !args.iter().any(|arg| arg == "--cloud-init")
