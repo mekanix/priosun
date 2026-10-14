@@ -429,7 +429,9 @@ fn main() -> Result<()> {
                 },
                 DestroyResource::Dataset { name } | DestroyResource::Volume { name } => {
                     let zfs_name = zfs_name(&config.zfs_pool, &name);
-                    util::cmd::run("zfs", &["destroy", "-f", &zfs_name])?;
+                    if priosun::metadata::dataset_exists(&zfs_name) {
+                        util::cmd::run("zfs", &["destroy", "-f", &zfs_name])?;
+                    }
                 }
             }
         }
