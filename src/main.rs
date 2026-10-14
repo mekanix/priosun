@@ -163,6 +163,8 @@ enum CreateResource {
         disk: String,
         #[arg(long)]
         os: String,
+        #[arg(long, value_parser = ["uefi", "bios"], default_value = "uefi")]
+        firmware: String,
         #[arg(long)]
         version: Option<String>,
         #[arg(long, requires = "cloud_init")]
@@ -359,6 +361,7 @@ fn main() -> Result<()> {
                 name,
                 disk,
                 os,
+                firmware,
                 version,
                 arch,
                 cloud_init,
@@ -379,6 +382,7 @@ fn main() -> Result<()> {
                     &bhyve::VmCreateOptions {
                         disk: &disk,
                         os: &os,
+                        firmware: &firmware,
                         version: version.as_deref(),
                         arch: arch.as_deref(),
                         cloud_init,

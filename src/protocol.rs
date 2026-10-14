@@ -308,6 +308,7 @@ pub fn request_to_args(request: &Nvtree) -> Result<Vec<String>> {
                         string_field(request, "os")?.to_string(),
                     ]);
                     append_string_option(request, &mut args, "version", "--version")?;
+                    append_string_option(request, &mut args, "firmware", "--firmware")?;
                     append_string_option(request, &mut args, "arch", "--arch")?;
                     if bool_field(request, "cloud_init")? {
                         args.push("--cloud-init".to_string());
@@ -694,6 +695,11 @@ fn encode_create(request: &mut Nvtree, args: &[String]) -> Result<()> {
             add_string(request, "disk", named_option(args, "--disk")?);
             add_string(request, "os", named_option(args, "--os")?);
             encode_optional_string(request, args, "--version", "version")?;
+            let firmware = optional_option(args, "--firmware")?.unwrap_or("uefi");
+            if firmware != "uefi" && firmware != "bios" {
+                bail!("unsupported VM firmware: {firmware}; expected uefi or bios");
+            }
+            add_string(request, "firmware", firmware);
             encode_optional_string(request, args, "--arch", "arch")?;
             add_bool(request, "cloud_init", has_flag(args, "--cloud-init"));
             if args.iter().any(|arg| arg == "--ssh-key")

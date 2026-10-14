@@ -39,6 +39,7 @@ pub struct VmConfig {
     pub name: String,
     pub disk: PathBuf,
     pub os: String,
+    pub firmware: String,
     pub iso: Option<PathBuf>,
     pub vnc_port: Option<u16>,
     pub vnc_bind: String,
@@ -224,6 +225,7 @@ fn provision_cloud_image(
 pub struct VmCreateOptions<'a> {
     pub disk: &'a str,
     pub os: &'a str,
+    pub firmware: &'a str,
     pub version: Option<&'a str>,
     pub arch: Option<&'a str>,
     pub cloud_init: bool,
@@ -288,6 +290,7 @@ fn read_config(name: &str, config: &Config) -> Result<VmConfig> {
         name: name.to_string(),
         disk: PathBuf::from(format!("/dev/zvol/{dataset}/disk.vol")),
         os: value("os")?,
+        firmware: optional("firmware")?.unwrap_or_else(|| "uefi".to_string()),
         iso: optional("iso")?.map(PathBuf::from),
         vnc_port: optional("vnc_port")?.map(|v| v.parse()).transpose()?,
         vnc_bind: value("vnc_bind")?,
@@ -459,6 +462,12 @@ fn valid_pci_id(pci_id: &str) -> bool {
 
 pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Result<()> {
     validate_os(options.os)?;
+    if options.firmware != "uefi" && options.firmware != "bios" {
+        bail!(
+            "unsupported VM firmware: {}; expected uefi or bios",
+            options.firmware
+        );
+    }
     if options.os == "windows" && (options.cloud_init || options.iso.is_none()) {
         bail!("Windows VMs require an installation ISO and cannot use cloud-init");
     }
@@ -505,6 +514,7 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
     cmd::run("zfs", &["create", "-s", "-V", options.disk, &disk_dataset])?;
     let dataset = vm_dataset(name, config)?;
     crate::metadata::set(&dataset, "os", options.os)?;
+    crate::metadata::set(&dataset, "firmware", options.firmware)?;
     if let Some(iso) = iso_path.as_ref() {
         crate::metadata::set(&dataset, "iso", &iso.display().to_string())?;
     }
@@ -1152,10 +1162,29 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
             "tpm.version=2.0".to_string(),
         ]);
     }
-    if config.vm_firmware.exists() {
+    if vm.firmware == "uefi" {
+        if !config.vm_firmware.exists() {
+            bail!("UEFI firmware not found: {}", config.vm_firmware.display());
+        }
         args.extend([
             "-l".to_string(),
             format!("bootrom,{}", config.vm_firmware.display()),
+        ]);
+    } else {
+        let firmware_dir = config
+            .vm_firmware
+            .parent()
+            .unwrap_or_else(|| Path::new("/usr/local/share/uefi-firmware"));
+        let bios_firmware = firmware_dir.join("BHYVE_UEFI_CSM.fd");
+        if !bios_firmware.exists() {
+            bail!(
+                "BIOS-compatible bhyve firmware not found: {} (install the bhyve-firmware package)",
+                bios_firmware.display()
+            );
+        }
+        args.extend([
+            "-l".to_string(),
+            format!("bootrom,{}", bios_firmware.display()),
         ]);
     }
     args.push(vm.name.clone());

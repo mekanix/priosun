@@ -73,6 +73,15 @@ priosun create vm windows \
   --vnc-port 5900 \
   --tpm
 
+# Use legacy BIOS for guests such as 32-bit FreeBSD i386
+priosun create vm freebsd-i386 \
+  --disk 32G \
+  --memory 4G \
+  --os freebsd \
+  --version 14.5 \
+  --firmware bios \
+  --iso ~/Downloads/FreeBSD-14.5-RELEASE-i386-disc1.iso
+
 priosun create vm freebsd15 \
   --disk 32G \
   --memory 4G \
@@ -154,7 +163,9 @@ The optional `--version MAJOR.MINOR` selects the PkgBase release and records
 the matching release metadata for the jail, such as `15.0` or `15.1`.
 
 VM creation requires `--os`; `freebsd`, `ubuntu`, `fedora`, `debian`, and `windows` are supported. Windows VMs require `--iso` and cannot use cloud-init. VMs may
-enable cloud-init with the flag `--cloud-init`. The selected OS determines the
+enable cloud-init with the flag `--cloud-init`. `--firmware` accepts `uefi` (the
+default) or `bios`; BIOS mode uses bhyve-firmware's CSM bootrom. Install the
+`bhyve-firmware` package to provide that image. The selected OS determines the
 cloud image format and import process. Both currently get a per-VM FAT32
 `cidata` volume under `/var/priosun/seed`, attached as an additional NVMe
 device.

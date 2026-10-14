@@ -678,6 +678,7 @@ fn create_vm(request: &nvtree::Nvtree, name: &str, config: &Config) -> Result<()
         &bhyve::VmCreateOptions {
             disk: string_field(request, "disk")?,
             os: string_field(request, "os")?,
+            firmware: optional_string(request, "firmware").unwrap_or("uefi"),
             version: optional_string(request, "version"),
             arch: optional_string(request, "arch"),
             cloud_init: bool_field(request, "cloud_init")?,
