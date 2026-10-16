@@ -851,15 +851,16 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let config = Config::load()?;
-    fs::create_dir_all(LOG_BASE).with_context(|| format!("failed to create {}", LOG_BASE))?;
-    ensure_datasets(&config)?;
-    start_enabled(&config)?;
     let socket = PathBuf::from(SOCKET_PATH);
     fs::create_dir_all(SOCKET_BASE).with_context(|| format!("failed to create {}", SOCKET_BASE))?;
     let _ = fs::remove_file(&socket);
     let listener =
         UnixListener::bind(&socket).with_context(|| format!("failed to bind {}", SOCKET_PATH))?;
     fs::set_permissions(&socket, std::os::unix::fs::PermissionsExt::from_mode(0o660))?;
+
+    fs::create_dir_all(LOG_BASE).with_context(|| format!("failed to create {}", LOG_BASE))?;
+    ensure_datasets(&config)?;
+    start_enabled(&config)?;
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
