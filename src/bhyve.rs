@@ -270,6 +270,11 @@ fn vm_dir(name: &str, _config: &Config) -> Result<PathBuf> {
     Ok(Path::new(VM_BASE).join(name))
 }
 
+fn vm_runtime_dir(name: &str) -> Result<PathBuf> {
+    validate_name(name)?;
+    Ok(Path::new("/var/run/priosun/vm").join(name))
+}
+
 fn seed_dataset(name: &str, config: &Config) -> Result<String> {
     validate_name(name)?;
     Ok(format!("{}{SEED_BASE}/{name}", config.zfs_pool))
@@ -288,7 +293,7 @@ fn read_config(name: &str, config: &Config) -> Result<VmConfig> {
     let optional = |name: &str| crate::metadata::get(&dataset, name);
     Ok(VmConfig {
         name: name.to_string(),
-        disk: PathBuf::from(format!("/dev/zvol/{dataset}/disk.vol")),
+        disk: PathBuf::from(format!("/dev/zvol/{dataset}")),
         os: value("os")?,
         firmware: optional("firmware")?.unwrap_or_else(|| "uefi".to_string()),
         iso: optional("iso")?.map(PathBuf::from),
@@ -378,8 +383,7 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
     if options.dsp.is_some_and(|dsp| dsp.trim().is_empty()) {
         bail!("DSP device path must not be empty");
     }
-    let dir = vm_dir(name, config)?;
-    if !dir.is_dir() {
+    if !path_exists(name, config) {
         bail!("VM does not exist: {name}");
     }
     let dataset = vm_dataset(name, config)?;
@@ -477,7 +481,7 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
         options.version.map(str::to_string)
     };
     let dir = vm_dir(name, config)?;
-    if dir.exists() {
+    if path_exists(name, config) {
         bail!("VM already exists: {}", name);
     }
     let jail_dir = Path::new(BASE_PATH).join("jail").join(name);
@@ -499,7 +503,7 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
     if options.vnc_port.is_some() && options.vnc_bind.trim().is_empty() {
         bail!("VNC bind address must not be empty");
     }
-    let disk_dataset = format!("{}{}/disk.vol", config.zfs_pool, dir.display());
+    let disk_dataset = format!("{}{}", config.zfs_pool, dir.display());
     let disk_path = PathBuf::from(format!("/dev/zvol/{disk_dataset}"));
     let iso_path = options
         .iso
@@ -509,9 +513,8 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
                 .with_context(|| format!("ISO does not exist: {}", path))
         })
         .transpose()?;
-    let vm_dataset_path = format!("{}{}", config.zfs_pool, dir.display());
-    cmd::run("zfs", &["create", "-p", &vm_dataset_path])?;
     cmd::run("zfs", &["create", "-s", "-V", options.disk, &disk_dataset])?;
+    fs::create_dir_all(vm_runtime_dir(name)?)?;
     let dataset = vm_dataset(name, config)?;
     crate::metadata::set(&dataset, "os", options.os)?;
     crate::metadata::set(&dataset, "firmware", options.firmware)?;
@@ -569,7 +572,7 @@ fn create_seed(
     }
     let dataset = seed_dataset(name, config)?;
     let device = seed_path(name, config)?;
-    let mountpoint = vm_dir(name, config)?.join("seed");
+    let mountpoint = Path::new(SEED_BASE).join(name);
     cmd::run("zfs", &["create", "-s", "-V", "256M", &dataset])?;
     cmd::run(
         "newfs_msdos",
@@ -801,21 +804,21 @@ pub fn set_enabled(name: &str, enabled: bool, config: &Config) -> Result<()> {
 }
 
 pub fn path_exists(name: &str, config: &Config) -> bool {
-    vm_dir(name, config)
-        .map(|path| path.is_dir())
+    vm_dataset(name, config)
+        .map(|dataset| zfs_dataset_exists(&dataset))
         .unwrap_or(false)
 }
 
-fn pid_path(name: &str, config: &Config) -> Result<PathBuf> {
-    Ok(vm_dir(name, config)?.join("bhyve.pid"))
+fn pid_path(name: &str, _config: &Config) -> Result<PathBuf> {
+    Ok(vm_runtime_dir(name)?.join("bhyve.pid"))
 }
 
-fn tpm_pid_path(name: &str, config: &Config) -> Result<PathBuf> {
-    Ok(vm_dir(name, config)?.join("tpm.pid"))
+fn tpm_pid_path(name: &str, _config: &Config) -> Result<PathBuf> {
+    Ok(vm_runtime_dir(name)?.join("tpm.pid"))
 }
 
-fn tap_path(name: &str, config: &Config) -> Result<PathBuf> {
-    Ok(vm_dir(name, config)?.join("tap"))
+fn tap_path(name: &str, _config: &Config) -> Result<PathBuf> {
+    Ok(vm_runtime_dir(name)?.join("tap"))
 }
 
 type SerialConsole = Arc<Mutex<fs::File>>;
@@ -1021,6 +1024,7 @@ fn start_with_stack_mode(
 }
 
 fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) -> Result<()> {
+    fs::create_dir_all(vm_runtime_dir(name)?)?;
     let vm = read_config(name, config)?;
     validate_os(&vm.os)?;
     if is_running(name, config) {
@@ -1321,8 +1325,7 @@ fn zfs_dataset_exists(dataset: &str) -> bool {
 }
 
 pub fn destroy(name: &str, config: &Config) -> Result<()> {
-    let dir = vm_dir(name, config)?;
-    if !dir.exists() {
+    if !path_exists(name, config) {
         bail!("VM does not exist: {}", name);
     }
     let dataset = vm_dataset(name, config)?;
@@ -1333,6 +1336,7 @@ pub fn destroy(name: &str, config: &Config) -> Result<()> {
     if zfs_dataset_exists(&seed) {
         cmd::run("zfs", &["destroy", "-f", &seed])?;
     }
+    let _ = fs::remove_dir_all(vm_runtime_dir(name)?);
     Ok(())
 }
 
@@ -1349,16 +1353,15 @@ pub fn is_running(name: &str, config: &Config) -> bool {
 
 pub fn list(config: &Config) -> Result<Vec<(String, bool)>> {
     let mut result = Vec::new();
-    let vm_base = Path::new(VM_BASE);
-    if !vm_base.exists() {
-        return Ok(result);
-    }
-    for entry in fs::read_dir(vm_base)? {
-        let entry = entry?;
-        if entry.path().is_dir() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if path_exists(&name, config) {
-                result.push((name.clone(), is_running(&name, config)));
+    let vm_base = format!("{}{}", config.zfs_pool, VM_BASE);
+    let output = cmd::run(
+        "zfs",
+        &["list", "-H", "-o", "name", "-t", "volume", "-r", &vm_base],
+    )?;
+    for dataset in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(name) = dataset.strip_prefix(&format!("{vm_base}/")) {
+            if !name.contains('/') {
+                result.push((name.to_string(), is_running(name, config)));
             }
         }
     }
