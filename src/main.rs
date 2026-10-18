@@ -548,7 +548,13 @@ fn main() -> Result<()> {
         }
         Commands::NetworkInit => {
             let config = config::Config::load()?;
-            network::init(&config)?;
+            network::init(
+                &config,
+                jail::UserIdentity {
+                    uid: unsafe { libc::getuid() },
+                    gid: unsafe { libc::getgid() },
+                },
+            )?;
         }
         Commands::Up => {
             bail!("up must be run without daemon execution");

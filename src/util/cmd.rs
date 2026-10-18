@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::cell::RefCell;
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
@@ -312,7 +312,8 @@ pub fn run_stdout_to_file(program: &str, args: &[&str], output_path: &Path) -> R
 
 pub fn run_append_log(program: &str, args: &[&str], log_path: &Path) -> Result<()> {
     debug!("Running: {} {}", program, args.join(" "));
-    if let Some(callback) = STREAM.with(|stream| stream.borrow().clone()) {
+    let callback = STREAM.with(|stream| stream.borrow().clone());
+    if let Some(callback) = &callback {
         callback(CommandEvent {
             program: program.to_string(),
             args: args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -325,14 +326,55 @@ pub fn run_append_log(program: &str, args: &[&str], log_path: &Path) -> Result<(
         .append(true)
         .open(log_path)
         .with_context(|| format!("failed to open log {}", log_path.display()))?;
+    // Services launched by rc may retain stdout/stderr after rc exits. Keep
+    // those descriptors attached to the log file and stream only new bytes;
+    // waiting for EOF on pipes would prevent the subsequent interactive login.
+    let mut reader = if callback.is_some() {
+        let mut reader = std::fs::File::open(log_path)?;
+        reader.seek(SeekFrom::End(0))?;
+        Some(reader)
+    } else {
+        None
+    };
     let stderr = stdout.try_clone()?;
-    let status = Command::new(program)
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr)
-        .status()
+        .spawn()
         .with_context(|| format!("failed to execute {} {}", program, args.join(" ")))?;
+    let status = if let (Some(reader), Some(callback)) = (&mut reader, callback) {
+        loop {
+            let status = child.try_wait()?;
+            // Bound each read to the current file size, even if a background
+            // service continues writing after the startup command has exited.
+            let available = reader
+                .metadata()?
+                .len()
+                .saturating_sub(reader.stream_position()?);
+            let mut pending = reader.take(available);
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let count = pending.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                callback(CommandEvent {
+                    program: String::new(),
+                    args: Vec::new(),
+                    stream: CommandStream::Stdout,
+                    data: buffer[..count].to_vec(),
+                });
+            }
+            if let Some(status) = status {
+                break status;
+            }
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+    } else {
+        child.wait()?
+    };
     if !status.success() {
         bail!(
             "command failed: {} {} (exit code: {:?}); see {}",
@@ -431,4 +473,68 @@ fn read_stream<R: Read>(
         });
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{mpsc, Mutex};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn startup_log_stream_finishes_while_background_service_keeps_output_open() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("priosun-log-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let log_path = directory.join("startup.log");
+        let release = directory.join("release");
+        std::fs::write(&log_path, b"previous startup\n").unwrap();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&output);
+        let worker_log = log_path.clone();
+        let worker_release = release.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let script = r#"
+printf 'rc stdout\n'
+printf 'rc stderr\n' >&2
+(while [ ! -e "$1" ]; do sleep 0.05; done; touch "$1.done") &
+"#;
+            let callback = Arc::new(move |event: CommandEvent| {
+                if matches!(event.stream, CommandStream::Stdout | CommandStream::Stderr) {
+                    captured.lock().unwrap().extend(event.data);
+                }
+            });
+            let result = with_stream(callback, || {
+                run_append_log(
+                    "/bin/sh",
+                    &["-c", script, "sh", worker_release.to_str().unwrap()],
+                    &worker_log,
+                )
+            });
+            sender.send(result).unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        // Release the background process even if the old pipe-based code hangs.
+        std::fs::write(&release, b"").unwrap();
+        worker.join().unwrap();
+        for _ in 0..100 {
+            if directory.join("release.done").exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(directory.join("release.done").exists());
+        let log = std::fs::read(&log_path).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        result
+            .expect("startup waited for a background service's output descriptors")
+            .unwrap();
+        assert_eq!(&*output.lock().unwrap(), b"rc stdout\nrc stderr\n");
+        assert_eq!(log, b"previous startup\nrc stdout\nrc stderr\n");
+    }
 }

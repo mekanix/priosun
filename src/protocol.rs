@@ -140,6 +140,9 @@ fn send_request_tree(socket: &Path, request: &Nvtree) -> Result<Nvtree> {
             let mut input = std::io::stdin();
             let mut buffer = [0_u8; 4096];
             loop {
+                while !input_detach_enabled.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
                 let count = match input.read(&mut buffer) {
                     Ok(0) | Err(_) => {
                         let mut message = nvtree::nvtree_create(0);
@@ -214,6 +217,7 @@ impl TerminalMode {
         }
         let mut raw = original;
         unsafe { libc::cfmakeraw(&mut raw) };
+        raw.c_oflag |= libc::OPOST | libc::ONLCR;
         if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } < 0 {
             bail!("set raw terminal mode: {}", std::io::Error::last_os_error());
         }
@@ -637,7 +641,7 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
         }
         _ => unreachable!(),
     }
-    if command == "create" || command == "up" {
+    if command == "create" || command == "up" || command == "network-init" {
         add_number(&mut request, "caller_uid", unsafe { libc::getuid() } as u64);
         add_number(&mut request, "caller_gid", unsafe { libc::getgid() } as u64);
     }
@@ -903,6 +907,10 @@ pub fn send_response(stream: &mut UnixStream, response: &Nvtree) -> Result<()> {
 
 pub fn command_event(command: &str, stdout: Option<&[u8]>, stderr: Option<&[u8]>) -> Nvtree {
     command_event_internal(command, stdout, stderr, false)
+}
+
+pub fn attach_command_event(command: &str) -> Nvtree {
+    command_event_internal(command, None, None, true)
 }
 
 pub fn serial_console_event() -> Nvtree {

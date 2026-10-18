@@ -11,7 +11,7 @@ const NETWORK_JAIL: &str = "network";
 const UNBOUND_PATH: &str = "/var/unbound";
 const JAIL_UNBOUND_PATH: &str = "var/unbound";
 
-pub fn init(config: &Config) -> Result<()> {
+pub fn init(config: &Config, provision_identity: jail::UserIdentity) -> Result<()> {
     if !config.use_ipv4 && !config.use_ipv6 {
         bail!("use_ipv4 or use_ipv6 must be enabled");
     }
@@ -21,14 +21,11 @@ pub fn init(config: &Config) -> Result<()> {
     if !jail::path_exists(NETWORK_JAIL, config) {
         jail::create(
             NETWORK_JAIL,
-            None,
+            Some("FreeBSD-set-minimal-jail"),
             None,
             (false, None),
             None,
-            jail::UserIdentity {
-                uid: unsafe { libc::getuid() },
-                gid: unsafe { libc::getgid() },
-            },
+            provision_identity,
             config,
         )?;
     }
@@ -149,6 +146,11 @@ fn install_packages(root: &Path) -> Result<()> {
 }
 
 fn configure_network(root: &Path, config: &Config) -> Result<()> {
+    let rc_conf = root.join("etc/rc.conf");
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(rc_conf)?;
     let root_path = root.display().to_string();
     let mut arguments = vec!["-R".to_string(), root_path];
     if config.use_ipv4 {
@@ -164,8 +166,6 @@ fn configure_network(root: &Path, config: &Config) -> Result<()> {
             "ifconfig_eth0=inet {network_ip} netmask 255.255.255.0"
         ));
         arguments.push(format!("defaultrouter={bridge_ip}"));
-    } else {
-        arguments.push("ifconfig_eth0=NONE".to_string());
     }
     if config.use_ipv6 {
         arguments.push(format!(
@@ -178,8 +178,6 @@ fn configure_network(root: &Path, config: &Config) -> Result<()> {
             prefix = config.ipv6_prefix,
             bridge_ip6 = config.bridge_ip6
         ));
-    } else {
-        arguments.push("ifconfig_eth0_ipv6=NONE".to_string());
     }
     let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
     crate::util::cmd::run("sysrc", &arguments)?;

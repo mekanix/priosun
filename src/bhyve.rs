@@ -554,11 +554,10 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
         &interface_mac_property(VIRTIO_NET_INTERFACE),
         &random_mac_address()?,
     )?;
-    if let Some(version) = image_version.as_deref() {
-        if options.cloud_init {
+    if let Some(version) = image_version.as_deref()
+        && options.cloud_init {
             provision_cloud_image(options.os, version, options.arch, &disk_path)?;
         }
-    }
     if options.cloud_init {
         create_seed(
             name,
@@ -580,11 +579,10 @@ fn create_seed(
     provision_gid: u32,
     config: &Config,
 ) -> Result<()> {
-    if let Some(ssh_key) = ssh_key {
-        if ssh_key.trim().is_empty() || ssh_key.contains(['\n', '\r']) {
+    if let Some(ssh_key) = ssh_key
+        && (ssh_key.trim().is_empty() || ssh_key.contains(['\n', '\r'])) {
             bail!("SSH public key must be a single non-empty line");
         }
-    }
     let dataset = seed_dataset(name, config)?;
     let device = seed_path(name, config)?;
     let mountpoint = Path::new(SEED_BASE).join(name);
@@ -921,12 +919,12 @@ pub fn serial_console(name: &str, config: &Config) -> Result<fs::File> {
         .cloned()
         .with_context(|| format!("serial console is unavailable for VM {name}"))?;
     drop(consoles);
-    let result = console
+    
+    console
         .lock()
         .map_err(|_| anyhow::anyhow!("VM serial console is poisoned"))?
         .try_clone()
-        .context("failed to clone VM serial console");
-    result
+        .context("failed to clone VM serial console")
 }
 
 fn tpm_socket_path(name: &str, config: &Config) -> Result<(String, String)> {
@@ -1264,22 +1262,21 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
         let _ = fs::remove_file(bhyve_pid);
         let _ = fs::remove_file(tpm_pid);
         let _ = fs::remove_file(tap_file);
-        if cleanup_seed {
-            if let Ok(seed) = seed_dataset(&vm_name, &vm_config) {
+        if cleanup_seed
+            && let Ok(seed) = seed_dataset(&vm_name, &vm_config) {
                 let _ = Command::new("zfs")
                     .args(["destroy", "-f", &seed])
                     .stdout(Stdio::null())
                     .status();
             }
-        }
     });
     Ok(())
 }
 
 pub fn stop(name: &str, config: &Config) -> Result<()> {
     let _ = read_config(name, config)?;
-    if let Ok(pid_text) = fs::read_to_string(pid_path(name, config)?) {
-        if let Ok(pid) = pid_text.trim().parse::<libc::pid_t>() {
+    if let Ok(pid_text) = fs::read_to_string(pid_path(name, config)?)
+        && let Ok(pid) = pid_text.trim().parse::<libc::pid_t>() {
             let kill_result = unsafe { libc::kill(pid, libc::SIGTERM) };
             if kill_result == -1
                 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
@@ -1290,7 +1287,6 @@ pub fn stop(name: &str, config: &Config) -> Result<()> {
             wait_for_exit(pid, name)?;
             wait_for_cleanup(&pid_path(name, config)?, name)?;
         }
-    }
     if let Ok(pid) = fs::read_to_string(tpm_pid_path(name, config)?) {
         let _ = cmd::run("kill", &["-TERM", pid.trim()]);
     }
@@ -1336,6 +1332,8 @@ fn destroy_bhyve_vm(name: &str) {
 fn zfs_dataset_exists(dataset: &str) -> bool {
     Command::new("zfs")
         .args(["list", "-H", "-o", "name", dataset])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -1376,11 +1374,10 @@ pub fn list(config: &Config) -> Result<Vec<(String, bool)>> {
         &["list", "-H", "-o", "name", "-t", "volume", "-r", &vm_base],
     )?;
     for dataset in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Some(name) = dataset.strip_prefix(&format!("{vm_base}/")) {
-            if !name.contains('/') {
+        if let Some(name) = dataset.strip_prefix(&format!("{vm_base}/"))
+            && !name.contains('/') {
                 result.push((name.to_string(), is_running(name, config)));
             }
-        }
     }
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)

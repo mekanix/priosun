@@ -171,6 +171,14 @@ pub fn create(
     let pkg_args = pkg_args.iter().map(String::as_str).collect::<Vec<_>>();
     cmd::run("pkg", &pkg_args)?;
 
+    // Some package sets, including the minimal jail set, do not install an
+    // rc.conf. Ensure later sysrc and append operations have a target file.
+    let rc_conf = chroot.join("etc/rc.conf");
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&rc_conf)?;
+
     if !base {
         cmd::message("Creating the provision user");
         let chroot_path = chroot.display().to_string();

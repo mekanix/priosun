@@ -135,7 +135,13 @@ fn handle(mut stream: UnixStream) -> Result<()> {
                 let _ = protocol::send_response(&mut writer, &response);
             }
         });
-        let result = priosun::util::cmd::with_stream(callback, || network::init(&config));
+        let provision_identity = jail::UserIdentity {
+            uid: caller_id(&request, "caller_uid", unsafe { libc::getuid() })?,
+            gid: caller_id(&request, "caller_gid", unsafe { libc::getgid() })?,
+        };
+        let result = priosun::util::cmd::with_stream(callback, || {
+            network::init(&config, provision_identity)
+        });
         let response = match result {
             Ok(()) => protocol::success(0, &[], &[]),
             Err(error) => protocol::error(&format!("{error:#}")),
@@ -331,7 +337,7 @@ fn execute_jail_attach(
     let child_input = master.try_clone()?;
     protocol::send_response(
         &mut writer.lock().expect("response writer lock poisoned"),
-        &protocol::command_event("login -f root", None, None),
+        &protocol::attach_command_event("login -f root"),
     )?;
     let output_writer = Arc::clone(&writer);
     let output_thread = thread::spawn(move || relay_login_output(master, output_writer));
@@ -865,11 +871,10 @@ fn main() -> Result<()> {
         match stream {
             Ok(stream) => {
                 thread::spawn(|| {
-                    if let Err(error) = handle(stream) {
-                        if !is_client_disconnect(&error) {
+                    if let Err(error) = handle(stream)
+                        && !is_client_disconnect(&error) {
                             tracing::error!(%error, "request failed");
                         }
-                    }
                 });
             }
             Err(error) => tracing::error!(%error, "socket accept failed"),

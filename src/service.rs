@@ -20,11 +20,10 @@ pub fn init(name: &str, container: &str, provisioner: Option<&str>, develop: boo
     if !matches!(container, "jail" | "vm") {
         bail!("unsupported container: {container}");
     }
-    if let Some(provisioner) = provisioner {
-        if provisioner != "ansible" {
+    if let Some(provisioner) = provisioner
+        && provisioner != "ansible" {
             bail!("unsupported provisioner: {provisioner}");
         }
-    }
 
     let service_dir = PathBuf::from(name);
     if service_dir.exists() {
