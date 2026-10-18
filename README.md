@@ -89,6 +89,14 @@ priosun create vm freebsd15 \
   --version 15.1 \
   --cloud-init
 
+# Use a development snapshot; append -STABLE or -CURRENT to the version
+priosun create vm freebsd-current \
+  --disk 32G \
+  --memory 4G \
+  --os freebsd \
+  --version 16.0-CURRENT \
+  --cloud-init
+
 # Select a different FreeBSD VM image architecture on an amd64 host
 priosun create vm freebsd144-i386 \
   --disk 32G \
@@ -170,7 +178,10 @@ cloud image format and import process. Both currently get a per-VM FAT32
 `cidata` volume under `/var/priosun/seed`, attached as an additional NVMe
 device.
 
-FreeBSD cloud images are downloaded as compressed raw images. Ubuntu, Fedora, and
+FreeBSD cloud images are downloaded as compressed raw images. FreeBSD versions
+without a branch suffix (for example, `15.1`) use release images; versions ending
+in `-STABLE` or `-CURRENT` use the corresponding development snapshots (for
+example, `15.1-STABLE` or `16.0-CURRENT`). Ubuntu, Fedora, and
 Debian cloud images are downloaded as bootable QCOW2 images and converted to raw
 before being written to the VM's NVMe zvol. Images are cached in
 `/var/priosun/images` and reused for later VM creations with the same release

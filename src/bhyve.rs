@@ -80,12 +80,18 @@ fn cloud_image_version(os: &str, version: Option<&str>) -> Result<String> {
         }
     };
     if os == "freebsd" {
-        let valid = version.split_once('.').is_some()
-            && version
+        let (release, branch) = version
+            .split_once('-')
+            .map_or((version.as_str(), "RELEASE"), |(release, branch)| {
+                (release, branch)
+            });
+        let valid = release.split_once('.').is_some()
+            && release
                 .chars()
-                .all(|character| character.is_ascii_digit() || character == '.');
+                .all(|character| character.is_ascii_digit() || character == '.')
+            && matches!(branch, "RELEASE" | "STABLE" | "CURRENT");
         if !valid {
-            bail!("invalid FreeBSD release version: {version}");
+            bail!("invalid FreeBSD VM image version: {version}; expected MAJOR.MINOR[-RELEASE|-STABLE|-CURRENT]");
         }
     } else if os == "ubuntu" && ubuntu_codename(&version).is_none() {
         bail!("unsupported Ubuntu release version: {version}");
@@ -194,9 +200,18 @@ fn provision_cloud_image(
         let url = format!("https://cloud.debian.org/images/cloud/{codename}/latest/{filename}");
         (filename, url)
     } else {
-        let filename = format!("FreeBSD-{version}-RELEASE-{arch}-BASIC-CLOUDINIT-zfs.raw.xz");
+        let (release, branch) = version
+            .split_once('-')
+            .map_or((version, "RELEASE"), |(release, branch)| (release, branch));
+        let image_version = format!("{release}-{branch}");
+        let filename = format!("FreeBSD-{image_version}-{arch}-BASIC-CLOUDINIT-zfs.raw.xz");
+        let root = if branch == "RELEASE" {
+            "releases"
+        } else {
+            "snapshots"
+        };
         let url = format!(
-            "https://download.freebsd.org/releases/VM-IMAGES/{version}-RELEASE/{arch}/Latest/{filename}"
+            "https://download.freebsd.org/{root}/VM-IMAGES/{image_version}/{arch}/Latest/{filename}"
         );
         (filename, url)
     };
@@ -255,7 +270,7 @@ pub struct VmSetOptions<'a> {
     pub sound: Option<bool>,
     pub dsp: Option<&'a str>,
     pub add_passthru: Option<&'a str>,
-    pub remove_passtru: Option<&'a str>,
+    pub remove_passthru: Option<&'a str>,
 }
 
 fn validate_name(name: &str) -> Result<()> {
@@ -347,19 +362,19 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
         || options.sound.is_some()
         || options.dsp.is_some()
         || options.add_passthru.is_some()
-        || options.remove_passtru.is_some();
+        || options.remove_passthru.is_some();
     if !has_options {
         bail!("set <vm> requires at least one option");
     }
     if options.remove_cd && options.iso.is_some() {
         bail!("--remove-cd cannot be combined with --iso");
     }
-    if options.add_passthru.is_some() && options.remove_passtru.is_some() {
-        bail!("--add-passthru and --remove-passtru cannot be combined");
+    if options.add_passthru.is_some() && options.remove_passthru.is_some() {
+        bail!("--add-passthru and --remove-passthru cannot be combined");
     }
     if options
         .add_passthru
-        .or(options.remove_passtru)
+        .or(options.remove_passthru)
         .is_some_and(|pci_id| !valid_pci_id(pci_id))
     {
         bail!("invalid PCI ID; expected a bus/slot/function address such as 4/0/0");
@@ -436,7 +451,7 @@ pub fn set_vm_options(name: &str, options: &VmSetOptions<'_>, config: &Config) -
         devices.push(pci_id.to_string());
         crate::metadata::set(&dataset, "passthru", &devices.join(","))?;
     }
-    if let Some(pci_id) = options.remove_passtru {
+    if let Some(pci_id) = options.remove_passthru {
         let mut devices = crate::metadata::get(&dataset, "passthru")?
             .unwrap_or_default()
             .split(',')
@@ -764,6 +779,8 @@ write_files:
     append: true
     content: |
       security.mac.do.rules=gid=0:any
+runcmd:
+  - kldload mac_do
 "#
                 ),
             )?;

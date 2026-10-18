@@ -60,10 +60,10 @@ enum Commands {
         no_sound: bool,
         #[arg(long)]
         dsp: Option<String>,
-        #[arg(long, conflicts_with = "remove_passtru")]
+        #[arg(long, conflicts_with = "remove_passthru")]
         add_passthru: Option<String>,
         #[arg(long)]
-        remove_passtru: Option<String>,
+        remove_passthru: Option<String>,
     },
     Stop {
         name: String,
@@ -470,7 +470,7 @@ fn main() -> Result<()> {
             no_sound,
             dsp,
             add_passthru,
-            remove_passtru,
+            remove_passthru,
         } => {
             let config = config::Config::load()?;
             bhyve::set_vm_options(
@@ -500,7 +500,7 @@ fn main() -> Result<()> {
                     },
                     dsp: dsp.as_deref(),
                     add_passthru: add_passthru.as_deref(),
-                    remove_passtru: remove_passtru.as_deref(),
+                    remove_passthru: remove_passthru.as_deref(),
                 },
                 &config,
             )?;

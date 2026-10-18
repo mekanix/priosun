@@ -626,7 +626,7 @@ fn execute_jail_request(
                         sound: optional_bool(request, "sound"),
                         dsp: optional_string(request, "dsp"),
                         add_passthru: optional_string(request, "add_passthru"),
-                        remove_passtru: optional_string(request, "remove_passtru"),
+                        remove_passthru: optional_string(request, "remove_passthru"),
                     },
                     &config,
                 )?;
