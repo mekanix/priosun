@@ -1,10 +1,10 @@
-use anyhow::{bail, Context, Result};
-use nvtree::{nvtree_add, nvtree_find, nvtree_string, Nvtvalue};
+use anyhow::{Context, Result, bail};
+use nvtree::{Nvtvalue, nvtree_add, nvtree_find, nvtree_string};
 use priosun::protocol::{self, SOCKET_BASE, SOCKET_PATH};
 use priosun::{
     bhyve,
     config::{
-        Config, BASE_DATASET_PATH, BASE_PATH, IMAGE_BASE, JAIL_BASE, LOG_BASE, SEED_BASE, VM_BASE,
+        BASE_DATASET_PATH, BASE_PATH, Config, IMAGE_BASE, JAIL_BASE, LOG_BASE, SEED_BASE, VM_BASE,
     },
     dependency, jail, metadata, network, service,
     util::cmd,
@@ -872,9 +872,10 @@ fn main() -> Result<()> {
             Ok(stream) => {
                 thread::spawn(|| {
                     if let Err(error) = handle(stream)
-                        && !is_client_disconnect(&error) {
-                            tracing::error!(%error, "request failed");
-                        }
+                        && !is_client_disconnect(&error)
+                    {
+                        tracing::error!(%error, "request failed");
+                    }
                 });
             }
             Err(error) => tracing::error!(%error, "socket accept failed"),

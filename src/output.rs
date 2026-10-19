@@ -1,5 +1,5 @@
-use anyhow::{bail, Result};
-use nvtree::{nvtree_find, Nvtree, Nvtvalue};
+use anyhow::{Result, bail};
+use nvtree::{Nvtree, Nvtvalue, nvtree_find};
 use tabled::Tabled;
 
 #[derive(Tabled)]

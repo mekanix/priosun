@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use libc::{c_char, c_int, c_uint, c_ulong, c_void};
 use std::ffi::{CStr, CString};
 use std::io;

@@ -1,7 +1,7 @@
-use crate::config::{Config, BASE_PATH, IMAGE_BASE, SEED_BASE, VM_BASE};
+use crate::config::{BASE_PATH, Config, IMAGE_BASE, SEED_BASE, VM_BASE};
 use crate::net;
 use crate::util::cmd;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
@@ -91,7 +91,9 @@ fn cloud_image_version(os: &str, version: Option<&str>) -> Result<String> {
                 .all(|character| character.is_ascii_digit() || character == '.')
             && matches!(branch, "RELEASE" | "STABLE" | "CURRENT");
         if !valid {
-            bail!("invalid FreeBSD VM image version: {version}; expected MAJOR.MINOR[-RELEASE|-STABLE|-CURRENT]");
+            bail!(
+                "invalid FreeBSD VM image version: {version}; expected MAJOR.MINOR[-RELEASE|-STABLE|-CURRENT]"
+            );
         }
     } else if os == "ubuntu" && ubuntu_codename(&version).is_none() {
         bail!("unsupported Ubuntu release version: {version}");
@@ -555,9 +557,10 @@ pub fn create(name: &str, options: &VmCreateOptions<'_>, config: &Config) -> Res
         &random_mac_address()?,
     )?;
     if let Some(version) = image_version.as_deref()
-        && options.cloud_init {
-            provision_cloud_image(options.os, version, options.arch, &disk_path)?;
-        }
+        && options.cloud_init
+    {
+        provision_cloud_image(options.os, version, options.arch, &disk_path)?;
+    }
     if options.cloud_init {
         create_seed(
             name,
@@ -580,9 +583,10 @@ fn create_seed(
     config: &Config,
 ) -> Result<()> {
     if let Some(ssh_key) = ssh_key
-        && (ssh_key.trim().is_empty() || ssh_key.contains(['\n', '\r'])) {
-            bail!("SSH public key must be a single non-empty line");
-        }
+        && (ssh_key.trim().is_empty() || ssh_key.contains(['\n', '\r']))
+    {
+        bail!("SSH public key must be a single non-empty line");
+    }
     let dataset = seed_dataset(name, config)?;
     let device = seed_path(name, config)?;
     let mountpoint = Path::new(SEED_BASE).join(name);
@@ -919,7 +923,7 @@ pub fn serial_console(name: &str, config: &Config) -> Result<fs::File> {
         .cloned()
         .with_context(|| format!("serial console is unavailable for VM {name}"))?;
     drop(consoles);
-    
+
     console
         .lock()
         .map_err(|_| anyhow::anyhow!("VM serial console is poisoned"))?
@@ -1262,13 +1266,12 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
         let _ = fs::remove_file(bhyve_pid);
         let _ = fs::remove_file(tpm_pid);
         let _ = fs::remove_file(tap_file);
-        if cleanup_seed
-            && let Ok(seed) = seed_dataset(&vm_name, &vm_config) {
-                let _ = Command::new("zfs")
-                    .args(["destroy", "-f", &seed])
-                    .stdout(Stdio::null())
-                    .status();
-            }
+        if cleanup_seed && let Ok(seed) = seed_dataset(&vm_name, &vm_config) {
+            let _ = Command::new("zfs")
+                .args(["destroy", "-f", &seed])
+                .stdout(Stdio::null())
+                .status();
+        }
     });
     Ok(())
 }
@@ -1276,17 +1279,17 @@ fn start_inner(name: &str, config: &Config, use_seed: bool, wait_for_vnc: bool) 
 pub fn stop(name: &str, config: &Config) -> Result<()> {
     let _ = read_config(name, config)?;
     if let Ok(pid_text) = fs::read_to_string(pid_path(name, config)?)
-        && let Ok(pid) = pid_text.trim().parse::<libc::pid_t>() {
-            let kill_result = unsafe { libc::kill(pid, libc::SIGTERM) };
-            if kill_result == -1
-                && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-            {
-                return Err(std::io::Error::last_os_error())
-                    .with_context(|| format!("failed to stop VM {name}"));
-            }
-            wait_for_exit(pid, name)?;
-            wait_for_cleanup(&pid_path(name, config)?, name)?;
+        && let Ok(pid) = pid_text.trim().parse::<libc::pid_t>()
+    {
+        let kill_result = unsafe { libc::kill(pid, libc::SIGTERM) };
+        if kill_result == -1 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("failed to stop VM {name}"));
         }
+        wait_for_exit(pid, name)?;
+        wait_for_cleanup(&pid_path(name, config)?, name)?;
+    }
     if let Ok(pid) = fs::read_to_string(tpm_pid_path(name, config)?) {
         let _ = cmd::run("kill", &["-TERM", pid.trim()]);
     }
@@ -1375,9 +1378,10 @@ pub fn list(config: &Config) -> Result<Vec<(String, bool)>> {
     )?;
     for dataset in String::from_utf8_lossy(&output.stdout).lines() {
         if let Some(name) = dataset.strip_prefix(&format!("{vm_base}/"))
-            && !name.contains('/') {
-                result.push((name.to_string(), is_running(name, config)));
-            }
+            && !name.contains('/')
+        {
+            result.push((name.to_string(), is_running(name, config)));
+        }
     }
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)

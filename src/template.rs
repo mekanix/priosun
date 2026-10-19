@@ -6,15 +6,16 @@ pub fn template_dir() -> std::path::PathBuf {
     }
     // Fallback for development: relative to executable
     if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent() {
-            let local = dir.join("../share/priosun/templates");
-            if local.exists() {
-                return local;
-            }
-            let dev = dir.join("templates");
-            if dev.exists() {
-                return dev;
-            }
+        && let Some(dir) = exe.parent()
+    {
+        let local = dir.join("../share/priosun/templates");
+        if local.exists() {
+            return local;
         }
+        let dev = dir.join("templates");
+        if dev.exists() {
+            return dev;
+        }
+    }
     Path::new("/usr/local/share/priosun/templates").to_path_buf()
 }

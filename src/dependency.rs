@@ -1,5 +1,5 @@
-use crate::config::{Config, BASE_DATASET_PATH, JAIL_BASE, VM_BASE};
-use anyhow::{bail, Result};
+use crate::config::{BASE_DATASET_PATH, Config, JAIL_BASE, VM_BASE};
+use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;

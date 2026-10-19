@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,9 +21,10 @@ pub fn init(name: &str, container: &str, provisioner: Option<&str>, develop: boo
         bail!("unsupported container: {container}");
     }
     if let Some(provisioner) = provisioner
-        && provisioner != "ansible" {
-            bail!("unsupported provisioner: {provisioner}");
-        }
+        && provisioner != "ansible"
+    {
+        bail!("unsupported provisioner: {provisioner}");
+    }
 
     let service_dir = PathBuf::from(name);
     if service_dir.exists() {
@@ -36,7 +37,9 @@ pub fn init(name: &str, container: &str, provisioner: Option<&str>, develop: boo
         .unwrap_or_else(|| "[]".to_string());
     fs::write(
         service_dir.join("service.toml"),
-        format!("name = \"{name}\"\ncontainer = \"{container}\"\ndevelop = {develop}\nprovisioners = {provisioners}\n"),
+        format!(
+            "name = \"{name}\"\ncontainer = \"{container}\"\ndevelop = {develop}\nprovisioners = {provisioners}\n"
+        ),
     )?;
     fs::write(
         service_dir.join(".gitignore"),

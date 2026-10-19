@@ -1,6 +1,6 @@
 use crate::config::{Config, JAIL_BASE};
 use crate::jail;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
@@ -365,7 +365,11 @@ fn configure_services(root: &Path, config: &Config) -> Result<()> {
         knot_dir.join("knot.conf"),
         format!(
             "include: /usr/local/etc/knot/ddns-key.conf\n\nserver:\n  listen: [ 127.0.0.1@53, {} ]\n\nacl:\n  - id: ddns_acl\n    key: ddns\n    action: update\n\nlog:\n  - target: syslog\n    any: info\n\ndatabase:\n  storage: /var/db/knot\n\ntemplate:\n  - id: default\n    storage: /var/db/knot\n    file: %s.zone\n\nzone:\n{knot_zones}",
-            listeners.iter().map(|ip| format!("{ip}@53")).collect::<Vec<_>>().join(", "),
+            listeners
+                .iter()
+                .map(|ip| format!("{ip}@53"))
+                .collect::<Vec<_>>()
+                .join(", "),
         ),
     )?;
     fs::write(
@@ -374,7 +378,8 @@ fn configure_services(root: &Path, config: &Config) -> Result<()> {
     )?;
     if config.use_ipv4 {
         fs::write(
-            root.join("var/db/knot").join(format!("{reverse_zone}.zone")),
+            root.join("var/db/knot")
+                .join(format!("{reverse_zone}.zone")),
             format!(
                 "$ORIGIN {reverse_zone}.\n$TTL 3600\n@ SOA network.{domain}. hostmaster.{domain}. ( 1 1h 15m 1w 1h )\n@ NS network.{domain}.\n"
             ),
@@ -382,7 +387,8 @@ fn configure_services(root: &Path, config: &Config) -> Result<()> {
     }
     if config.use_ipv6 {
         fs::write(
-            root.join("var/db/knot").join(format!("{reverse_zone6}.zone")),
+            root.join("var/db/knot")
+                .join(format!("{reverse_zone6}.zone")),
             format!(
                 "$ORIGIN {reverse_zone6}.\n$TTL 3600\n@ SOA network.{domain}. hostmaster.{domain}. ( 1 1h 15m 1w 1h )\n@ NS network.{domain}.\n"
             ),

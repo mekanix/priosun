@@ -1,9 +1,9 @@
 use crate::bhyve;
-use crate::config::{Config, BASE_DATASET_PATH, JAIL_BASE, LOG_BASE};
+use crate::config::{BASE_DATASET_PATH, Config, JAIL_BASE, LOG_BASE};
 use crate::net;
 use crate::template;
 use crate::util::cmd;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -630,7 +630,11 @@ fn start_inner(name: &str, config: &Config) -> Result<()> {
     }
     cmd::message(&format!("Starting services inside jail {name}"));
     let log_path = Path::new(LOG_BASE).join(format!("{name}.log"));
-    if let Err(error) = cmd::run_append_log("jexec", &[name, "/bin/sh", "/etc/rc"], &log_path) {
+    // Run rc in its own session so services it starts (e.g. kea) do not stay
+    // in priosund's process group and die with it on a terminal interrupt.
+    if let Err(error) =
+        cmd::run_append_log_detached("jexec", &[name, "/bin/sh", "/etc/rc"], &log_path)
+    {
         let _ = cleanup_epair(&epair_a, config);
         let _ = running.stop();
         let _ = cmd::run("umount", &[&dev_dir.display().to_string()]);

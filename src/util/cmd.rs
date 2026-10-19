@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::cell::RefCell;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -311,6 +311,17 @@ pub fn run_stdout_to_file(program: &str, args: &[&str], output_path: &Path) -> R
 }
 
 pub fn run_append_log(program: &str, args: &[&str], log_path: &Path) -> Result<()> {
+    run_append_log_inner(program, args, log_path, false)
+}
+
+/// Like `run_append_log`, but the child starts its own session so processes
+/// it spawns are not killed by signals delivered to the caller's process
+/// group (e.g. a terminal interrupt of the daemon).
+pub fn run_append_log_detached(program: &str, args: &[&str], log_path: &Path) -> Result<()> {
+    run_append_log_inner(program, args, log_path, true)
+}
+
+fn run_append_log_inner(program: &str, args: &[&str], log_path: &Path, detach: bool) -> Result<()> {
     debug!("Running: {} {}", program, args.join(" "));
     let callback = STREAM.with(|stream| stream.borrow().clone());
     if let Some(callback) = &callback {
@@ -337,11 +348,24 @@ pub fn run_append_log(program: &str, args: &[&str], log_path: &Path) -> Result<(
         None
     };
     let stderr = stdout.try_clone()?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(stdout)
-        .stderr(stderr)
+        .stderr(stderr);
+    if detach {
+        use std::os::unix::process::CommandExt;
+        // The child is not a process group leader after fork, so setsid(2)
+        // succeeds and detaches it (and its descendants) from our session.
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to execute {} {}", program, args.join(" ")))?;
     let status = if let (Some(reader), Some(callback)) = (&mut reader, callback) {
@@ -478,7 +502,7 @@ fn read_stream<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{mpsc, Mutex};
+    use std::sync::{Mutex, mpsc};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
