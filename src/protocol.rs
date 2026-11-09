@@ -69,7 +69,9 @@ pub fn receive_message(stream: &mut UnixStream) -> Result<Nvtree> {
 }
 
 pub fn send_message(stream: &mut UnixStream, message: &Nvtree) -> Result<()> {
-    write_message(stream, &nvtree_pack(message))
+    let (data, _) = nvtree_pack(message)
+        .map_err(|error| anyhow!("failed to pack nvtree message: {error:?}"))?;
+    write_message(stream, &data)
 }
 
 pub struct Client {
