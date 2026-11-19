@@ -627,6 +627,20 @@ fn create_seed(
                 )
             })
             .unwrap_or_default();
+        let remove_provision_uid = if os == "freebsd" {
+            format!(
+                "bootcmd:\n  - if pw usershow -u {provision_uid} >/dev/null 2>&1; then pw userdel -u {provision_uid} -r; fi\n"
+            )
+        } else {
+            format!(
+                "bootcmd:\n  - [sh, -c, 'if getent passwd {provision_uid} >/dev/null; then userdel -r \"$(getent passwd {provision_uid} | cut -d: -f1)\"; fi']\n"
+            )
+        };
+        let freebsd_default_user = if provision_uid == 1001 {
+            ""
+        } else {
+            "  - default\n"
+        };
         if os == "ubuntu" {
             fs::write(
                 mountpoint.join("user-data"),
@@ -634,7 +648,7 @@ fn create_seed(
                     r#"#cloud-config
 package_update: true
 package_upgrade: true
-users:
+{remove_provision_uid}users:
   - default
   - name: provision
     uid: {provision_uid}
@@ -672,7 +686,7 @@ power_state:
                     r#"#cloud-config
 package_update: true
 package_upgrade: true
-users:
+{remove_provision_uid}users:
   - default
   - name: provision
     uid: {provision_uid}
@@ -727,7 +741,7 @@ ethernets:
                     r#"#cloud-config
 package_update: true
 package_upgrade: true
-users:
+{remove_provision_uid}users:
   - default
   - name: provision
     uid: {provision_uid}
@@ -757,8 +771,8 @@ power_state:
                 mountpoint.join("user-data"),
                 format!(
                     r#"#cloud-config
-users:
-  - default
+{remove_provision_uid}users:
+{freebsd_default_user}
   - name: provision
     uid: {provision_uid}
     gid: {provision_gid}
