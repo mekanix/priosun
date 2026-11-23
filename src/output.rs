@@ -54,6 +54,60 @@ pub fn nvtree_to_table(response: &Nvtree) -> Result<String> {
     Ok(format!("{table}\n"))
 }
 
+pub fn nvtree_to_columns(
+    response: &Nvtree,
+    resource: &str,
+    fields: &[String],
+    headers: bool,
+) -> Result<String> {
+    let rows = rows(response, resource)
+        .ok_or_else(|| anyhow::anyhow!("response contains no {resource}"))?;
+    let columns = rows
+        .iter()
+        .map(|row| fields.iter().map(|field| string(row, field)).collect())
+        .collect::<Vec<Vec<String>>>();
+    Ok(rows_to_columns(
+        fields
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice(),
+        &columns,
+        &(0..fields.len()).collect::<Vec<_>>(),
+        headers,
+    ))
+}
+
+pub fn rows_to_columns(
+    names: &[&str],
+    rows: &[Vec<String>],
+    fields: &[usize],
+    headers: bool,
+) -> String {
+    let mut output = String::new();
+    if headers {
+        output.push_str(
+            &fields
+                .iter()
+                .map(|field| names[*field])
+                .collect::<Vec<_>>()
+                .join("\t"),
+        );
+        output.push('\n');
+    }
+    for row in rows {
+        output.push_str(
+            &fields
+                .iter()
+                .map(|field| row[*field].as_str())
+                .collect::<Vec<_>>()
+                .join("\t"),
+        );
+        output.push('\n');
+    }
+    output
+}
+
 fn rows<'a>(response: &'a Nvtree, field: &str) -> Option<&'a [Nvtree]> {
     match nvtree_find(response, field).map(|pair| &pair.value) {
         Some(Nvtvalue::NestedArray(rows)) => Some(rows),

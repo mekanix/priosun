@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use nvtree::{Nvtvalue, nvtree_find};
 use priosun::{bhyve, config, jail, network, output, protocol, service, util};
@@ -98,6 +98,10 @@ enum Commands {
     },
     List {
         resource: ListResource,
+        #[arg(short = 'H')]
+        no_table: bool,
+        #[arg(short = 'o', value_name = "ATTRIBUTES")]
+        attributes: Option<String>,
     },
 }
 
@@ -267,12 +271,16 @@ fn main() -> Result<()> {
         } else {
             std::env::args().skip(1).collect()
         };
-        if args == ["list", "all"] {
+        if args.starts_with(&["list".to_string(), "all".to_string()]) {
+            let no_table = args.iter().any(|arg| arg == "-H");
+            let attributes = option_value(&args, "-o");
             for resource in ["datasets", "volumes", "jails", "vms"] {
-                println!("=== {resource} ===");
+                if !no_table {
+                    println!("=== {resource} ===");
+                }
                 let request = vec!["list".to_string(), resource.to_string()];
                 let envelope = protocol::send_request(&request)?;
-                let status = print_response(&envelope)?;
+                let status = print_response(&envelope, no_table, attributes.as_deref())?;
                 if status != 0 {
                     std::process::exit(status);
                 }
@@ -280,7 +288,9 @@ fn main() -> Result<()> {
             std::process::exit(0);
         }
         let envelope = protocol::send_request(&args)?;
-        std::process::exit(print_response(&envelope)?);
+        let no_table = args.iter().any(|arg| arg == "-H");
+        let attributes = option_value(&args, "-o");
+        std::process::exit(print_response(&envelope, no_table, attributes.as_deref())?);
     }
 
     match cli.command {
@@ -580,25 +590,105 @@ fn main() -> Result<()> {
             };
             service::init(&name, container, provisioner, develop)?;
         }
-        Commands::List { resource } => match resource {
+        Commands::List {
+            resource,
+            no_table,
+            attributes,
+        } => match resource {
             ListResource::Datasets => {
-                print_table(zfs_rows("datasets", &["list", "-H", "-o", "name"])?);
+                let rows = zfs_rows("datasets", &["list", "-H", "-o", "name"])?;
+                if no_table || attributes.is_some() {
+                    print_selected_fields(
+                        &["name"],
+                        rows.iter().map(|row| vec![row.name.clone()]).collect(),
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                } else {
+                    print_table(rows);
+                }
             }
             ListResource::Volumes => {
-                print_table(zfs_rows(
-                    "volumes",
-                    &["list", "-H", "-o", "name", "-t", "volume"],
-                )?);
+                let rows = zfs_rows("volumes", &["list", "-H", "-o", "name", "-t", "volume"])?;
+                if no_table || attributes.is_some() {
+                    print_selected_fields(
+                        &["name"],
+                        rows.iter().map(|row| vec![row.name.clone()]).collect(),
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                } else {
+                    print_table(rows);
+                }
             }
             ListResource::Jails => {
-                print_table(jail_rows()?);
+                if no_table || attributes.is_some() {
+                    let names = ["name", "hostname", "ips", "status"];
+                    let mut rows = Vec::new();
+                    for row in jail::list(&config::Config::load()?)? {
+                        rows.push(vec![row.name, row.hostname, row.ips, row.status]);
+                    }
+                    print_selected_fields(&names, rows, attributes.as_deref(), no_table)?;
+                } else {
+                    print_table(jail_rows()?);
+                }
             }
             ListResource::Vms => {
                 let config = config::Config::load()?;
-                print_table(vm_rows(&config)?);
+                let rows = vm_rows(&config)?;
+                if no_table || attributes.is_some() {
+                    print_selected_fields(
+                        &["name", "status"],
+                        rows.iter()
+                            .map(|row| vec![row.name.clone(), row.status.clone()])
+                            .collect(),
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                } else {
+                    print_table(rows);
+                }
             }
             ListResource::All => {
                 let config = config::Config::load()?;
+                if no_table || attributes.is_some() {
+                    let datasets = zfs_rows("datasets", &["list", "-H", "-o", "name"])?;
+                    print_selected_fields(
+                        &["name"],
+                        datasets.iter().map(|row| vec![row.name.clone()]).collect(),
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                    let volumes =
+                        zfs_rows("volumes", &["list", "-H", "-o", "name", "-t", "volume"])?;
+                    print_selected_fields(
+                        &["name"],
+                        volumes.iter().map(|row| vec![row.name.clone()]).collect(),
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                    let jails = jail::list(&config)?
+                        .into_iter()
+                        .map(|row| vec![row.name, row.hostname, row.ips, row.status])
+                        .collect();
+                    print_selected_fields(
+                        &["name", "hostname", "ips", "status"],
+                        jails,
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                    let vms = vm_rows(&config)?
+                        .iter()
+                        .map(|row| vec![row.name.clone(), row.status.clone()])
+                        .collect();
+                    print_selected_fields(
+                        &["name", "status"],
+                        vms,
+                        attributes.as_deref(),
+                        no_table,
+                    )?;
+                    return Ok(());
+                }
                 let mut rows = zfs_rows("datasets", &["list", "-H", "-o", "name"])?;
                 rows.extend(zfs_rows(
                     "volumes",
@@ -664,7 +754,11 @@ fn print_table(rows: Vec<ResourceRow>) {
     println!("{}", tabled::Table::new(rows));
 }
 
-fn print_response(envelope: &nvtree::Nvtree) -> Result<i32> {
+fn print_response(
+    envelope: &nvtree::Nvtree,
+    no_table: bool,
+    attributes: Option<&str>,
+) -> Result<i32> {
     if let Some(Nvtvalue::String(error)) = nvtree_find(envelope, "error").map(|pair| &pair.value) {
         eprintln!("{error}");
         return Ok(1);
@@ -681,7 +775,20 @@ fn print_response(envelope: &nvtree::Nvtree) -> Result<i32> {
         .iter()
         .any(|resource| nvtree_find(response, resource).is_some())
     {
-        print!("{}", output::nvtree_to_table(response)?);
+        if no_table || attributes.is_some() {
+            let resource = ["datasets", "volumes", "jails", "vms"]
+                .into_iter()
+                .find(|resource| nvtree_find(response, resource).is_some())
+                .context("response contains no tabular resource")?;
+            let available = resource_attributes(resource);
+            let fields = parse_attributes(attributes, available)?;
+            print!(
+                "{}",
+                output::nvtree_to_columns(response, resource, &fields, !no_table)?
+            );
+        } else {
+            print!("{}", output::nvtree_to_table(response)?);
+        }
     } else {
         use std::io::Write;
         if let Some(Nvtvalue::String(stdout)) =
@@ -696,6 +803,60 @@ fn print_response(envelope: &nvtree::Nvtree) -> Result<i32> {
         }
     }
     Ok(status)
+}
+
+fn option_value(args: &[String], option: &str) -> Option<String> {
+    args.iter()
+        .position(|arg| arg == option)
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+}
+
+fn parse_attributes(attributes: Option<&str>, available: &[&str]) -> Result<Vec<String>> {
+    let fields = attributes
+        .map(str::to_string)
+        .unwrap_or_else(|| available.join(","))
+        .split(',')
+        .map(str::trim)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if fields.is_empty() || fields.iter().any(String::is_empty) {
+        bail!("attribute list must contain comma-separated names");
+    }
+    for field in &fields {
+        if !available.contains(&field.as_str()) {
+            bail!("unsupported list attribute: {field}");
+        }
+    }
+    Ok(fields)
+}
+
+fn resource_attributes(resource: &str) -> &'static [&'static str] {
+    match resource {
+        "datasets" | "volumes" => &["name"],
+        "jails" => &["name", "hostname", "ips", "status"],
+        "vms" => &["name", "status"],
+        _ => &[],
+    }
+}
+
+fn print_selected_fields(
+    names: &[&str],
+    rows: Vec<Vec<String>>,
+    attributes: Option<&str>,
+    no_table: bool,
+) -> Result<()> {
+    let available = names.to_vec();
+    let fields = parse_attributes(attributes, &available)?;
+    let indexes = fields
+        .iter()
+        .map(|field| names.iter().position(|name| name == field).unwrap())
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        output::rows_to_columns(names, &rows, &indexes, !no_table)
+    );
+    Ok(())
 }
 
 fn zfs_name(pool: &str, name: &str) -> String {
