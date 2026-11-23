@@ -246,7 +246,9 @@ enum DependencyResource {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    let cli = Cli::parse();
+    let argv = std::env::args().collect::<Vec<_>>();
+    let normalized_args = protocol::normalize_command_args(&argv[1..]);
+    let cli = Cli::parse_from(std::iter::once(argv[0].clone()).chain(normalized_args));
 
     let direct_command = matches!(&cli.command, Commands::Init { .. });
     if std::env::var_os("PRIOSUN_DAEMON_EXEC").is_none() && !direct_command {
@@ -256,6 +258,8 @@ fn main() -> Result<()> {
             service::down_args()?
         } else if matches!(&cli.command, Commands::Provision) {
             service::provision_args()?
+        } else if let Commands::List { resource, .. } = &cli.command {
+            vec!["list".to_string(), list_resource_name(resource).to_string()]
         } else if matches!(&cli.command, Commands::Attach { name: None }) {
             service::attach_args()?
         } else if matches!(
@@ -271,9 +275,15 @@ fn main() -> Result<()> {
         } else {
             std::env::args().skip(1).collect()
         };
+        let (no_table, attributes) = match &cli.command {
+            Commands::List {
+                no_table,
+                attributes,
+                ..
+            } => (*no_table, attributes.clone()),
+            _ => (false, None),
+        };
         if args.starts_with(&["list".to_string(), "all".to_string()]) {
-            let no_table = args.iter().any(|arg| arg == "-H");
-            let attributes = option_value(&args, "-o");
             for resource in ["datasets", "volumes", "jails", "vms"] {
                 if !no_table {
                     println!("=== {resource} ===");
@@ -288,8 +298,6 @@ fn main() -> Result<()> {
             std::process::exit(0);
         }
         let envelope = protocol::send_request(&args)?;
-        let no_table = args.iter().any(|arg| arg == "-H");
-        let attributes = option_value(&args, "-o");
         std::process::exit(print_response(&envelope, no_table, attributes.as_deref())?);
     }
 
@@ -805,11 +813,14 @@ fn print_response(
     Ok(status)
 }
 
-fn option_value(args: &[String], option: &str) -> Option<String> {
-    args.iter()
-        .position(|arg| arg == option)
-        .and_then(|index| args.get(index + 1))
-        .cloned()
+fn list_resource_name(resource: &ListResource) -> &'static str {
+    match resource {
+        ListResource::Datasets => "datasets",
+        ListResource::Volumes => "volumes",
+        ListResource::Jails => "jails",
+        ListResource::Vms => "vms",
+        ListResource::All => "all",
+    }
 }
 
 fn parse_attributes(attributes: Option<&str>, available: &[&str]) -> Result<Vec<String>> {

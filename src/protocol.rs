@@ -487,6 +487,8 @@ fn append_number_option(
 }
 
 pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
+    let normalized_args = normalize_command_args(args);
+    let args = normalized_args.as_slice();
     let Some(command) = args.first() else {
         bail!("request is missing command");
     };
@@ -648,6 +650,118 @@ pub fn request_from_args(args: &[String]) -> Result<Nvtree> {
         add_number(&mut request, "caller_gid", unsafe { libc::getgid() } as u64);
     }
     Ok(request)
+}
+
+pub fn normalize_command_args(args: &[String]) -> Vec<String> {
+    let command_index = args
+        .iter()
+        .position(|argument| SUPPORTED_COMMANDS.contains(&argument.as_str()));
+    let Some(command_index) = command_index else {
+        return args.to_vec();
+    };
+    let mut ordered = Vec::with_capacity(args.len());
+    ordered.push(args[command_index].clone());
+    ordered.extend(args[..command_index].iter().cloned());
+    ordered.extend(args[command_index + 1..].iter().cloned());
+    let args = ordered.as_slice();
+    let value_options = [
+        "--config",
+        "--size",
+        "--set",
+        "--base",
+        "--version",
+        "--ssh-key",
+        "--disk",
+        "--os",
+        "--firmware",
+        "--arch",
+        "--iso",
+        "--vnc-port",
+        "--vnc-bind",
+        "--vnc-width",
+        "--vnc-height",
+        "--cpus",
+        "--memory",
+        "--dsp",
+        "--add-passthru",
+        "--remove-passthru",
+        "--container",
+        "--develop",
+        "--service-dir",
+        "--provisioner",
+        "--name",
+        "-o",
+    ];
+    let mut positional = Vec::new();
+    let mut options = Vec::new();
+    let mut index = 1;
+    while index < args.len() {
+        let arg = &args[index];
+        if value_options.contains(&arg.as_str()) {
+            options.push(arg.clone());
+            if let Some(value) = args.get(index + 1) {
+                options.push(value.clone());
+                index += 2;
+            } else {
+                index += 1;
+            }
+        } else if arg.starts_with('-') {
+            options.push(arg.clone());
+            index += 1;
+        } else {
+            positional.push(arg.clone());
+            index += 1;
+        }
+    }
+    reorder_resource_positionals(args.first().map(String::as_str), &mut positional);
+    let mut normalized = Vec::with_capacity(args.len());
+    if let Some(command) = args.first() {
+        normalized.push(command.clone());
+    }
+    normalized.extend(positional);
+    normalized.extend(options);
+    normalized
+}
+
+fn reorder_resource_positionals(command: Option<&str>, positional: &mut Vec<String>) {
+    let resources: &[&str] = match command {
+        Some("create" | "destroy") => &["dataset", "volume", "jail", "vm", "base"],
+        Some("dependencies") => &["jail", "vm"],
+        Some("list") => &["datasets", "volumes", "jails", "vms", "all"],
+        _ => return,
+    };
+    let resource_index = if matches!(command, Some("create" | "destroy")) {
+        positional
+            .iter()
+            .position(|argument| argument == "base")
+            .or_else(|| {
+                positional
+                    .iter()
+                    .position(|argument| resources.contains(&argument.as_str()))
+            })
+    } else {
+        positional
+            .iter()
+            .position(|argument| resources.contains(&argument.as_str()))
+    };
+    let Some(resource_index) = resource_index else {
+        return;
+    };
+    let resource = positional.remove(resource_index);
+    positional.insert(0, resource.clone());
+    if resource == "base"
+        && let Some(nested_index) =
+            positional
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find_map(|(index, argument)| {
+                    matches!(argument.as_str(), "jail" | "vm").then_some(index)
+                })
+    {
+        let nested_resource = positional.remove(nested_index);
+        positional.insert(1, nested_resource);
+    }
 }
 
 fn encode_create(request: &mut Nvtree, args: &[String]) -> Result<()> {
